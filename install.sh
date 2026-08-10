@@ -14,7 +14,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 INSTALL_DIR="/opt/kronox-dash"
-REPO_URL="https://github.com/Toraqua/Dash.git"
+REPO_URL="https://github.com/Toraqua/dash-dev.git"
 
 # 2. Atualizar pacotes e instalar dependências do sistema
 echo "📦 Instalando dependências do sistema (Node.js, Git, NetworkManager)..."
