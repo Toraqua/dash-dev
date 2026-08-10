@@ -35,50 +35,162 @@ class GatewayService {
     });
   }
 
-  // --- NETWORK MANAGEMENT (eth0, wlan0, wlan1) ---
+  async getRealSystemNetworkInfo(iface) {
+    const real = {
+      ip_address: '',
+      netmask_cidr: '',
+      gateway: '',
+      dns: '',
+      mode: '',
+      is_default_route: false,
+      wifi_ssid: '',
+      connected: false
+    };
+
+    try {
+      // 1. Check IP and Netmask (CIDR) from `ip -4 addr show dev <iface>`
+      const ipRes = await this.execPromise(`ip -4 addr show dev ${iface}`);
+      if (ipRes.success && ipRes.output) {
+        const match = ipRes.output.match(/inet\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\/([0-9]+)/);
+        if (match) {
+          real.ip_address = match[1];
+          real.netmask_cidr = match[2];
+          real.connected = true;
+        }
+        if (ipRes.output.includes('dynamic')) {
+          real.mode = 'dhcp';
+        }
+      }
+
+      // 2. Check Gateway & Default Route from `ip route show dev <iface>`
+      const routeRes = await this.execPromise(`ip route show dev ${iface}`);
+      if (routeRes.success && routeRes.output) {
+        const gwMatch = routeRes.output.match(/default via ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+        if (gwMatch) {
+          real.gateway = gwMatch[1];
+          real.is_default_route = true;
+        } else {
+          const subnetGwMatch = routeRes.output.match(/via ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+          if (subnetGwMatch) real.gateway = subnetGwMatch[1];
+        }
+      }
+
+      // Check global default route if not found yet
+      if (!real.is_default_route) {
+        const defRouteRes = await this.execPromise(`ip route show default`);
+        if (defRouteRes.success && defRouteRes.output) {
+          if (defRouteRes.output.includes(`dev ${iface}`)) {
+            real.is_default_route = true;
+            const gwMatch = defRouteRes.output.match(/default via ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+            if (gwMatch && !real.gateway) real.gateway = gwMatch[1];
+          }
+        }
+      }
+
+      // 3. Check DNS from `nmcli` or `/etc/resolv.conf`
+      const nmcliDns = await this.execPromise(`nmcli -t -f IP4.DNS device show ${iface}`);
+      if (nmcliDns.success && nmcliDns.output) {
+        const dnsList = nmcliDns.output
+          .split('\n')
+          .map(line => line.split(':')[1])
+          .filter(Boolean);
+        if (dnsList.length > 0) {
+          real.dns = dnsList.join(', ');
+        }
+      }
+
+      if (!real.dns) {
+        const resolvRes = await this.execPromise(`grep nameserver /etc/resolv.conf`);
+        if (resolvRes.success && resolvRes.output) {
+          const dnsList = resolvRes.output
+            .split('\n')
+            .map(l => l.replace('nameserver', '').trim())
+            .filter(ip => ip && ip !== '127.0.0.1' && ip !== '127.0.0.53');
+          if (dnsList.length > 0) real.dns = dnsList.join(', ');
+        }
+      }
+
+      // 4. Connection Name, Mode & Wi-Fi SSID from `nmcli device show <iface>`
+      const nmcliShow = await this.execPromise(`nmcli -t -f GENERAL.CONNECTION,GENERAL.STATE,IP4.GATEWAY device show ${iface}`);
+      if (nmcliShow.success && nmcliShow.output) {
+        let connName = '';
+        nmcliShow.output.split('\n').forEach(line => {
+          if (line.startsWith('GENERAL.CONNECTION:')) {
+            connName = line.replace('GENERAL.CONNECTION:', '').trim();
+          } else if (line.startsWith('IP4.GATEWAY:') && !real.gateway) {
+            const gw = line.replace('IP4.GATEWAY:', '').trim();
+            if (gw && gw !== '--') real.gateway = gw;
+          } else if (line.startsWith('GENERAL.STATE:')) {
+            const state = line.replace('GENERAL.STATE:', '').trim();
+            if (state.includes('connected')) real.connected = true;
+          }
+        });
+
+        if (connName && connName !== '--') {
+          if (iface.startsWith('wlan')) {
+            real.wifi_ssid = connName;
+          }
+          const methodRes = await this.execPromise(`nmcli -t -f ipv4.method connection show "${connName}"`);
+          if (methodRes.success && methodRes.output) {
+            const method = methodRes.output.replace('ipv4.method:', '').trim();
+            if (method === 'manual') real.mode = 'static';
+            else if (method === 'auto') real.mode = 'dhcp';
+          }
+        }
+      }
+
+      // Fallback SSID check for Wi-Fi using iwgetid
+      if (iface.startsWith('wlan') && !real.wifi_ssid) {
+        const iwRes = await this.execPromise(`iwgetid -r ${iface} || iwgetid -r`);
+        if (iwRes.success && iwRes.output) {
+          real.wifi_ssid = iwRes.output.trim();
+        }
+      }
+    } catch (e) {
+      console.error(`Error reading real network info for ${iface}:`, e);
+    }
+
+    return real;
+  }
+
+  // --- NETWORK MANAGEMENT (eth0, wlan0) ---
   async getNetworkStatus() {
     return new Promise((resolve) => {
       db.all('SELECT * FROM gateway_network_config', [], async (err, rows) => {
         if (err || !rows) rows = [];
-        
-        // System interfaces check via nmcli / ip link
-        const ipLinkResult = await this.execPromise('ip -j link show || ip link show');
-        const nmcliResult = await this.execPromise('nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device || echo ""');
 
-        const systemInterfaces = {};
-        if (nmcliResult.success && nmcliResult.output) {
-          nmcliResult.output.split('\n').forEach(line => {
-            const parts = line.split(':');
-            if (parts.length >= 3) {
-              systemInterfaces[parts[0]] = { type: parts[1], state: parts[2], conn: parts[3] };
-            }
-          });
-        }
+        const interfaces = await Promise.all(['eth0', 'wlan0'].map(async (iface) => {
+          const stored = rows.find(r => r.interface === iface) || {};
+          const real = await this.getRealSystemNetworkInfo(iface);
 
-        const interfaces = ['eth0', 'wlan0'].map(iface => {
-          const stored = rows.find(r => r.interface === iface) || {
-            interface: iface,
-            enabled: 1,
-            mode: 'dhcp',
-            ip_address: '',
-            netmask_cidr: '24',
-            gateway: '',
-            dns: '',
-            is_default_route: iface === 'eth0' ? 1 : 0,
-            wifi_ssid: '',
-            wifi_security: 'wpa2',
-            wifi_password: ''
-          };
+          const ip_address = real.ip_address || stored.ip_address || '';
+          const netmask_cidr = real.netmask_cidr || stored.netmask_cidr || '24';
+          const gateway = real.gateway || stored.gateway || '';
+          const dns = real.dns || stored.dns || '';
+          const mode = real.mode || stored.mode || 'dhcp';
+          const is_default_route = real.is_default_route ? 1 : (stored.is_default_route !== undefined ? stored.is_default_route : (iface === 'eth0' ? 1 : 0));
+          const wifi_ssid = real.wifi_ssid || stored.wifi_ssid || '';
+          const wifi_security = stored.wifi_security || 'wpa2';
+          const wifi_password = stored.wifi_password || '';
 
-          const sysInfo = systemInterfaces[iface];
-          const isPresent = Boolean(sysInfo || true);
+          const isConnected = real.connected;
 
           return {
-            ...stored,
-            present: isPresent,
-            connected: isPresent && sysInfo ? sysInfo.state === 'connected' : Boolean(stored.enabled)
+            interface: iface,
+            enabled: isConnected ? 1 : (stored.enabled !== undefined ? stored.enabled : 1),
+            mode,
+            ip_address,
+            netmask_cidr,
+            gateway,
+            dns,
+            is_default_route,
+            wifi_ssid,
+            wifi_security,
+            wifi_password,
+            present: true,
+            connected: isConnected
           };
-        });
+        }));
 
         resolve(interfaces);
       });
