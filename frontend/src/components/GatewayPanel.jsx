@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Network, Wifi, Globe, Shield, Server, Cpu, Lock, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Save, Plus, Trash2, Download, Upload, Eye, EyeOff, Radio, Activity, ArrowUpRight, Clock, HelpCircle, HardDrive } from 'lucide-react';
+import { Network, Wifi, Globe, Shield, Server, Cpu, Lock, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Save, Plus, Trash2, Download, Upload, Eye, EyeOff, Radio, Activity, ArrowUpRight, Clock, HelpCircle, HardDrive, Zap, Search } from 'lucide-react';
 
 function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefresh }) {
   const [activeSubTab, setActiveSubTab] = useState('eth0');
@@ -32,6 +32,12 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
   const [showPassword, setShowPassword] = useState(false);
   const [showMqttPassword, setShowMqttPassword] = useState(false);
 
+  // Ping state
+  const [pingHost, setPingHost] = useState('');
+  const [pingLoading, setPingLoading] = useState(false);
+  const [pingResult, setPingResult] = useState(null);
+  const [pingHistory, setPingHistory] = useState([]);
+
   // Anti-Brick Safe Mode Modal
   const [showRollbackModal, setShowRollbackModal] = useState(false);
   const [rollbackCountdown, setRollbackCountdown] = useState(60);
@@ -57,6 +63,26 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
   const showNotify = (msg, type = 'info') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 4000);
+  };
+
+  const handlePing = async () => {
+    if (!pingHost.trim()) return showNotify('Digite um IP ou hostname para pingar.', 'error');
+    setPingLoading(true);
+    setPingResult(null);
+    try {
+      const res = await fetch(getBaseUrl() + '/api/gateway/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: pingHost.trim() })
+      });
+      const data = await res.json();
+      setPingResult(data);
+      setPingHistory(prev => [{ ...data, id: Date.now() }, ...prev].slice(0, 20));
+    } catch(e) {
+      setPingResult({ success: false, output: 'Erro de conexão com o backend.', host: pingHost, timestamp: new Date().toISOString() });
+    } finally {
+      setPingLoading(false);
+    }
   };
 
   const fetchGatewayData = async () => {
@@ -127,7 +153,7 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
 
   const currentNetConfig = networkConfigs.find(c => c.interface === activeSubTab) || {
     interface: activeSubTab,
-    enabled: activeSubTab === 'wlan1' ? 0 : 1,
+    enabled: 1,
     mode: 'dhcp',
     ip_address: '',
     netmask_cidr: '24',
@@ -137,7 +163,7 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
     wifi_ssid: '',
     wifi_security: 'wpa2',
     wifi_password: '',
-    present: activeSubTab !== 'wlan1'
+    present: true
   };
 
   const handleUpdateNetConfig = (field, val) => {
@@ -367,11 +393,11 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
         {[
           { id: 'eth0', label: 'Ethernet 0', icon: HardDrive },
-          { id: 'wlan0', label: 'Wi-Fi 0 (wlan0)', icon: Wifi },
-          { id: 'wlan1', label: 'Wi-Fi 1 (wlan1)', icon: Wifi },
+          { id: 'wlan0', label: 'Wi-Fi (wlan0)', icon: Wifi },
           { id: 'routes', label: 'Rotas Estáticas', icon: Network },
           { id: 'vpn', label: 'VPN Netbird', icon: Shield },
           { id: 'mqtt', label: 'Broker MQTT', icon: Server },
+          { id: 'ping', label: 'Ping', icon: Activity },
           { id: 'audit', label: 'Auditoria', icon: Clock }
         ].map(item => {
           const IconComponent = item.icon;
@@ -396,8 +422,8 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
         })}
       </div>
 
-      {/* --- SUB-PANEL: ETHERNET & WI-FI (eth0, wlan0, wlan1) --- */}
-      {(activeSubTab === 'eth0' || activeSubTab === 'wlan0' || activeSubTab === 'wlan1') && (
+      {/* --- SUB-PANEL: ETHERNET & WI-FI (eth0, wlan0) --- */}
+      {(activeSubTab === 'eth0' || activeSubTab === 'wlan0') && (
         <div className="card" style={{ background: 'var(--bg-card)', padding: '1.75rem', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
           {/* Header & Enabled Toggle (Matching Screenshot 1) */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
@@ -405,7 +431,7 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
               {activeSubTab.startsWith('wlan') ? <Wifi size={24} color="var(--color-primary)" /> : <HardDrive size={24} color="var(--color-primary)" />}
               <div>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
-                  Configuração de Rede: {activeSubTab === 'eth0' ? 'Ethernet (eth0)' : activeSubTab === 'wlan0' ? 'Wi-Fi 0 (wlan0)' : 'Wi-Fi 1 (wlan1 USB)'}
+                  Configuração de Rede: {activeSubTab === 'eth0' ? 'Ethernet (eth0)' : 'Wi-Fi (wlan0)'}
                 </h3>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Raspberry Pi OS 64-bit (NetworkManager / nmcli)</span>
               </div>
@@ -427,13 +453,6 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
             </div>
           </div>
 
-          {/* Absence Warning for wlan1 USB dongle */}
-          {activeSubTab === 'wlan1' && !currentNetConfig.present && (
-            <div style={{ padding: '0.75rem 1rem', background: 'rgba(245, 158, 11, 0.15)', border: '1px solid #f59e0b', borderRadius: '8px', color: '#fbbf24', fontSize: '0.85rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <AlertTriangle size={18} />
-              <span>Aviso: Adaptador Wi-Fi USB <strong>wlan1</strong> não detectado no sistema no momento.</span>
-            </div>
-          )}
 
           {/* Mode Selector Radio (Static Settings vs DHCP) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginBottom: '1.5rem', background: 'var(--bg-subcard)', padding: '0.75rem 1rem', borderRadius: '8px' }}>
@@ -574,7 +593,6 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
               <select className="form-input" value={newRoute.interface} onChange={e => setNewRoute({...newRoute, interface: e.target.value})}>
                 <option value="eth0">eth0</option>
                 <option value="wlan0">wlan0</option>
-                <option value="wlan1">wlan1</option>
               </select>
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -893,6 +911,125 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* --- SUB-PANEL: PING --- */}
+      {activeSubTab === 'ping' && (
+        <div className="card" style={{ background: 'var(--bg-card)', padding: '1.75rem', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem' }}>
+            <Activity size={24} color="var(--color-primary)" />
+            <div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>Ferramenta de Ping (ICMP)</h3>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Verifique a conectividade de rede com dispositivos da rede local ou internet</span>
+            </div>
+          </div>
+
+          {/* Input + Button */}
+          <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', alignItems: 'flex-end' }}>
+            <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Globe size={14} /> Endereço IP ou Hostname
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="ex: 192.168.0.1 ou google.com"
+                value={pingHost}
+                onChange={e => setPingHost(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && !pingLoading && handlePing()}
+                style={{ fontSize: '1rem' }}
+              />
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={handlePing}
+              disabled={pingLoading}
+              style={{ padding: '0.65rem 1.5rem', minWidth: '130px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              {pingLoading
+                ? <><RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> Pingando...</>
+                : <><Activity size={16} /> Pingar</>}
+            </button>
+          </div>
+
+          {/* Result Box */}
+          {pingResult && (
+            <div style={{
+              background: pingResult.success ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+              border: `1px solid ${pingResult.success ? 'var(--color-success)' : 'var(--color-danger)'}`,
+              borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {pingResult.success
+                    ? <CheckCircle2 size={20} color="var(--color-success)" />
+                    : <XCircle size={20} color="var(--color-danger)" />}
+                  <strong style={{ fontSize: '1rem', color: pingResult.success ? '#4ade80' : '#f87171' }}>
+                    {pingResult.success ? 'Host alcançado com sucesso' : 'Host não alcançado / erro'}
+                  </strong>
+                </div>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {pingResult.timestamp ? new Date(pingResult.timestamp).toLocaleTimeString('pt-BR') : ''}
+                </span>
+              </div>
+              <pre style={{
+                margin: 0, fontFamily: 'monospace', fontSize: '0.82rem',
+                color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                background: 'rgba(0,0,0,0.25)', padding: '0.75rem', borderRadius: '6px',
+                maxHeight: '220px', overflowY: 'auto', lineHeight: '1.5'
+              }}>
+                {pingResult.output}
+              </pre>
+            </div>
+          )}
+
+          {/* Ping History */}
+          {pingHistory.length > 0 && (
+            <div>
+              <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Clock size={14} /> Histórico da Sessão
+              </h4>
+              <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}>
+                      <th style={{ padding: '0.5rem 1rem' }}>Host</th>
+                      <th style={{ padding: '0.5rem 1rem' }}>Status</th>
+                      <th style={{ padding: '0.5rem 1rem', textAlign: 'right' }}>Horário</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pingHistory.map(h => (
+                      <tr
+                        key={h.id}
+                        style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer' }}
+                        onClick={() => setPingResult(h)}
+                      >
+                        <td style={{ padding: '0.5rem 1rem', fontWeight: 600 }}>{h.host}</td>
+                        <td style={{ padding: '0.5rem 1rem' }}>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                            padding: '0.2rem 0.6rem', borderRadius: '20px', fontSize: '0.78rem', fontWeight: 600,
+                            background: h.success ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                            color: h.success ? '#4ade80' : '#f87171',
+                            border: `1px solid ${h.success ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`
+                          }}>
+                            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: h.success ? '#4ade80' : '#f87171' }} />
+                            {h.success ? 'OK' : 'FALHA'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.5rem 1rem', textAlign: 'right', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                          {h.timestamp ? new Date(h.timestamp).toLocaleTimeString('pt-BR') : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>Clique em uma linha para ver o resultado completo.</p>
+            </div>
+          )}
         </div>
       )}
 

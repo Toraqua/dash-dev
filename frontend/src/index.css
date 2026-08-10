@@ -149,6 +149,11 @@ body {
   overflow: hidden;
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .sidebar {
   width: 260px;
   background: var(--bg-panel);
@@ -700,4 +705,95 @@ body {
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2) !important;
 }
 
+/* =========================================
+   MOBILE RESPONSIVO (max-width: 768px)
+   Corrige scroll travado em celulares
+   ========================================= */
+@media (max-width: 768px) {
+  body {
+    overflow-y: auto;
+  }
 
+  .app-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .sidebar {
+    width: 100%;
+    padding: 1rem 1rem 0.5rem;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 0.25rem;
+    flex: 1;
+    padding-bottom: 0.25rem;
+  }
+
+  .sidebar-nav .nav-item {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+    border-radius: 8px;
+  }
+
+  .sidebar-logo {
+    margin-bottom: 0;
+    font-size: 1.1rem;
+  }
+
+  .sidebar-status {
+    display: none;
+  }
+
+  .sidebar-lighting {
+    display: none;
+  }
+
+  .main-content {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: visible;
+    min-height: 0;
+  }
+
+  .page-header {
+    margin-bottom: 1rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .page-title {
+    font-size: 1.25rem;
+  }
+
+  /* Dashboard grid em mobile: 1 coluna */
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Cards em mobile */
+  .card {
+    padding: 1rem !important;
+  }
+
+  /* Tabelas: scroll horizontal em mobile */
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

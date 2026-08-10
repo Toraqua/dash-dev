@@ -55,10 +55,10 @@ class GatewayService {
           });
         }
 
-        const interfaces = ['eth0', 'wlan0', 'wlan1'].map(iface => {
+        const interfaces = ['eth0', 'wlan0'].map(iface => {
           const stored = rows.find(r => r.interface === iface) || {
             interface: iface,
-            enabled: iface === 'wlan1' ? 0 : 1,
+            enabled: 1,
             mode: 'dhcp',
             ip_address: '',
             netmask_cidr: '24',
@@ -71,7 +71,7 @@ class GatewayService {
           };
 
           const sysInfo = systemInterfaces[iface];
-          const isPresent = Boolean(sysInfo || iface !== 'wlan1');
+          const isPresent = Boolean(sysInfo || true);
 
           return {
             ...stored,
@@ -111,22 +111,59 @@ class GatewayService {
 
             this.logAudit(user, 'NETWORK', `UPDATE_INTERFACE_${iface.toUpperCase()}`, config);
 
-            // 3. Execute NetworkManager (nmcli) commands on Linux if nmcli exists
+            // 3. Execute NetworkManager (nmcli) commands on Linux
             const metric = is_default_route ? 10 : (iface === 'eth0' ? 100 : 200);
-            let sysCmd = '';
+            let sysRes = { success: false, output: 'nmcli não executado' };
 
-            if (mode === 'static' && ip_address) {
-              sysCmd = `nmcli connection modify ${iface} ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric} && nmcli connection up ${iface}`;
-            } else {
-              sysCmd = `nmcli connection modify ${iface} ipv4.method auto ipv4.route-metric ${metric} && nmcli connection up ${iface}`;
+            // Check if a nmcli connection profile already exists for this interface
+            const connListRes = await this.execPromise(`nmcli -t -f NAME,DEVICE connection show`);
+            let connName = null;
+            if (connListRes.success && connListRes.output) {
+              connListRes.output.split('\n').forEach(line => {
+                const parts = line.split(':');
+                if (parts.length >= 2 && parts[1].trim() === iface) {
+                  connName = parts[0].trim();
+                }
+              });
             }
 
             if (iface.startsWith('wlan') && wifi_ssid) {
-              sysCmd = `nmcli dev wifi connect "${wifi_ssid}" password "${wifi_password}" ifname ${iface}`;
+              // Wi-Fi: connect to SSID
+              const wifiCmd = `nmcli dev wifi connect "${wifi_ssid}" password "${wifi_password || ''}" ifname ${iface}`;
+              sysRes = await this.execPromise(wifiCmd);
+              // After connecting, set IP if static
+              if (sysRes.success && mode === 'static' && ip_address) {
+                await this.execPromise(`nmcli connection modify "${wifi_ssid}" ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric}`);
+                await this.execPromise(`nmcli connection up "${wifi_ssid}"`);
+              } else if (sysRes.success && mode === 'dhcp') {
+                await this.execPromise(`nmcli connection modify "${wifi_ssid}" ipv4.method auto ipv4.route-metric ${metric}`);
+                await this.execPromise(`nmcli connection up "${wifi_ssid}"`);
+              }
+            } else if (connName) {
+              // Connection profile exists — modify it
+              if (mode === 'static' && ip_address) {
+                sysRes = await this.execPromise(
+                  `nmcli connection modify "${connName}" ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric} && nmcli connection up "${connName}"`
+                );
+              } else {
+                sysRes = await this.execPromise(
+                  `nmcli connection modify "${connName}" ipv4.method auto ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ipv4.route-metric ${metric} && nmcli connection up "${connName}"`
+                );
+              }
+            } else {
+              // No connection profile exists — create one
+              const connType = iface.startsWith('wlan') ? 'wifi' : 'ethernet';
+              if (mode === 'static' && ip_address) {
+                sysRes = await this.execPromise(
+                  `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric} && nmcli connection up ${iface}`
+                );
+              } else {
+                sysRes = await this.execPromise(
+                  `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ipv4.method auto ipv4.route-metric ${metric} && nmcli connection up ${iface}`
+                );
+              }
             }
 
-            const sysRes = await this.execPromise(sysCmd);
-            
             // Start 60s Anti-Brick rollback timer
             if (this.rollbackTimer) clearTimeout(this.rollbackTimer);
             this.rollbackTimer = setTimeout(() => {
@@ -490,6 +527,25 @@ class GatewayService {
         resolve(rows || []);
       });
     });
+  }
+
+  // --- PING UTILITY ---
+  async pingHost(host) {
+    if (!host || !/^[a-zA-Z0-9._\-]+$/.test(host)) {
+      return { success: false, output: 'Host inválido ou não especificado.' };
+    }
+    // Use ping -c 4 on Linux, ping -n 4 on Windows (fallback)
+    const isWindows = process.platform === 'win32';
+    const cmd = isWindows
+      ? `ping -n 4 ${host}`
+      : `ping -c 4 -W 2 ${host}`;
+    const res = await this.execPromise(cmd);
+    return {
+      success: res.success,
+      host,
+      output: res.output || 'Sem saída do comando ping.',
+      timestamp: new Date().toISOString()
+    };
   }
 }
 
