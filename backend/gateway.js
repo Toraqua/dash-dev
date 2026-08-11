@@ -10,6 +10,16 @@ class GatewayService {
     this.rollbackTimer = null;
     this.backupConfig = null;
     this.initMqtt();
+    this.ensureKernelNetworkSettings();
+  }
+
+  // --- KERNEL DUAL-INTERFACE STABILITY (rp_filter loose mode) ---
+  async ensureKernelNetworkSettings() {
+    // Loose mode (rp_filter=2) prevents Linux kernel from dropping packets on dual-interface setups
+    await this.execPromise('sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null || true');
+    await this.execPromise('sysctl -w net.ipv4.conf.default.rp_filter=2 2>/dev/null || true');
+    await this.execPromise('sysctl -w net.ipv4.conf.eth0.rp_filter=2 2>/dev/null || true');
+    await this.execPromise('sysctl -w net.ipv4.conf.wlan0.rp_filter=2 2>/dev/null || true');
   }
 
   // --- AUDIT LOGGER ---
@@ -188,6 +198,8 @@ class GatewayService {
 
             this.logAudit(user, 'NETWORK', `UPDATE_INTERFACE_${iface.toUpperCase()}`, config);
 
+            await this.ensureKernelNetworkSettings();
+
             // 3. Execute NetworkManager (nmcli) commands
             let sysRes = { success: false, output: 'nmcli não disponível neste sistema.' };
 
@@ -203,6 +215,8 @@ class GatewayService {
               });
             }
 
+            const gwArg = gateway ? `ipv4.gateway "${gateway}"` : `remove ipv4.gateway 2>/dev/null || true`;
+
             if (iface.startsWith('wlan') && wifi_ssid) {
               // Wi-Fi: connect to SSID first
               sysRes = await this.execPromise(`nmcli dev wifi connect "${wifi_ssid}" password "${wifi_password || ''}" ifname ${iface} 2>/dev/null`);
@@ -212,7 +226,7 @@ class GatewayService {
                   `nmcli connection modify "${wifiConn}" ` +
                   `ipv4.method manual ` +
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
-                  `ipv4.gateway "${gateway || ''}" ` +
+                  (gateway ? `ipv4.gateway "${gateway}" ` : ``) +
                   `ipv4.never-default ${neverDefault} ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
@@ -234,7 +248,7 @@ class GatewayService {
                   `nmcli connection modify "${connName}" ` +
                   `ipv4.method manual ` +
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
-                  `ipv4.gateway "${gateway || ''}" ` +
+                  (gateway ? `ipv4.gateway "${gateway}" ` : ``) +
                   `ipv4.never-default ${neverDefault} ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
@@ -245,8 +259,7 @@ class GatewayService {
                 sysRes = await this.execPromise(
                   `nmcli connection modify "${connName}" ` +
                   `ipv4.method auto ` +
-                  `ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ` +
-                  `ipv4.never-default ${neverDefault} ` +
+                  `ipv4.addresses "" ipv4.never-default ${neverDefault} ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
                   `nmcli connection up "${connName}" 2>/dev/null`
                 );
@@ -259,7 +272,7 @@ class GatewayService {
                   `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ` +
                   `ipv4.method manual ` +
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
-                  `ipv4.gateway "${gateway || ''}" ` +
+                  (gateway ? `ipv4.gateway "${gateway}" ` : ``) +
                   `ipv4.never-default ${neverDefault} ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
