@@ -711,9 +711,9 @@ app.get('/api/history/export/csv', (req, res) => {
     });
 
     const csvString = csvLines.join('\r\n');
-    const buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csvString, 'utf-8')]);
+    const buffer = Buffer.from(csvString, 'latin1');
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Type', 'text/csv; charset=iso-8859-1');
     res.setHeader('Content-Disposition', 'attachment; filename=telemetria_kronox.csv');
     res.send(buffer);
   });
@@ -735,13 +735,13 @@ app.get('/api/alarm_history/export/csv', (req, res) => {
     rows.forEach(r => {
       const trigTime = r.trigger_time ? new Date(r.trigger_time).toLocaleString('pt-BR') : '';
       const resTime = r.resolve_time ? new Date(r.resolve_time).toLocaleString('pt-BR') : 'Em Aberto (Ativo)';
-      const statusText = r.status === 'ACTIVE' ? '🔴 ATIVO' : '🟢 RESOLVIDO';
+      const statusText = r.status === 'ACTIVE' ? 'ATIVO' : 'RESOLVIDO';
       const cleanMeasures = (r.action_measures || '').replace(/"/g, '""').replace(/\r?\n/g, ' ');
       csv += `"${trigTime}";"${resTime}";"${(r.name || '').replace(/"/g, '""')}";"${(r.device_name || 'CLP Principal').replace(/"/g, '""')}";"${r.severity || ''}";"${statusText}";"${cleanMeasures}"\r\n`;
     });
 
-    const buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf-8')]);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    const buffer = Buffer.from(csv, 'latin1');
+    res.setHeader('Content-Type', 'text/csv; charset=iso-8859-1');
     res.setHeader('Content-Disposition', 'attachment; filename=historico_falhas_kronox.csv');
     res.send(buffer);
   });

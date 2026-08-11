@@ -42,7 +42,12 @@ function TableWidget({ v, val, history = [] }) {
     });
     const headers = `Data / Hora;"${headerLabel.replace(/"/g, '""')}"`;
     const csvContent = [headers, ...csvRows].join('\r\n');
-    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+    const bytes = new Uint8Array(csvContent.length);
+    for (let i = 0; i < csvContent.length; i++) {
+      const code = csvContent.charCodeAt(i);
+      bytes[i] = code < 256 ? code : 63;
+    }
+    const blob = new Blob([bytes], { type: 'text/csv;charset=iso-8859-1;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
