@@ -179,6 +179,8 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
   const [snapCounter, setSnapCounter] = useState(0);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const [lastReadTimes, setLastReadTimes] = useState({});
+  const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -186,7 +188,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const isMobileView = windowWidth <= 768 || (width > 0 && width <= 768);
+  const isMobileView = windowWidth <= 768;
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5000);
