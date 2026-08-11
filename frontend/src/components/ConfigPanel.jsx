@@ -106,18 +106,23 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
   const handleExportAuditCSV = () => {
     try {
-      const headers = ['ID', 'Data/Hora', 'Usuario', 'Acao', 'Parametro/Detalhes', 'Valor Anterior', 'Novo Valor', 'Status'];
-      const rows = auditLogs.map(l => [
-        l.id,
-        new Date(l.timestamp).toLocaleString('pt-BR'),
-        `"${l.user || ''}"`,
-        `"${l.action || ''}"`,
-        `"${l.param_name || ''}"`,
-        `"${l.old_value || ''}"`,
-        `"${l.new_value || ''}"`,
-        `"${l.status || ''}"`
-      ]);
-      const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const headers = ['ID', 'Data/Hora', 'Usuário', 'Ação', 'Parâmetro / Detalhes', 'Valor Anterior', 'Novo Valor', 'Status'];
+      const rows = auditLogs.map(l => {
+        const dateStr = l.timestamp ? new Date(l.timestamp).toLocaleString('pt-BR') : '';
+        const oldVal = (l.old_value !== undefined && l.old_value !== null ? String(l.old_value) : '').replace('.', ',');
+        const newVal = (l.new_value !== undefined && l.new_value !== null ? String(l.new_value) : '').replace('.', ',');
+        return [
+          l.id,
+          `"${dateStr}"`,
+          `"${(l.user || 'Sistema').replace(/"/g, '""')}"`,
+          `"${(l.action || '').replace(/"/g, '""')}"`,
+          `"${(l.param_name || '').replace(/"/g, '""')}"`,
+          `"${oldVal.replace(/"/g, '""')}"`,
+          `"${newVal.replace(/"/g, '""')}"`,
+          `"${(l.status || 'SUCESSO').replace(/"/g, '""')}"`
+        ];
+      });
+      const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\r\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -127,7 +132,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showNotification('Relatório de auditoria exportado!', 'success');
+      showNotification('Relatório de auditoria exportado com sucesso!', 'success');
     } catch (e) {
       showNotification('Erro ao exportar auditoria', 'error');
     }

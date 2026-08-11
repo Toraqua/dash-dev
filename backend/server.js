@@ -444,48 +444,72 @@ app.post('/api/config/import', async (req, res) => {
   db.serialize(() => {
     db.run('BEGIN TRANSACTION');
 
-    if (Array.isArray(devices) && devices.length > 0) {
+    if (Array.isArray(devices)) {
       db.run('DELETE FROM devices');
-      const stmt = db.prepare('INSERT INTO devices (id, name, ip_address, port, polling_interval_ms, status) VALUES (?, ?, ?, ?, ?, ?)');
-      devices.forEach(d => stmt.run(d.id, d.name, d.ip_address, d.port, d.polling_interval_ms, d.status || 'Offline'));
-      stmt.finalize();
+      if (devices.length > 0) {
+        const stmt = db.prepare('INSERT INTO devices (id, name, ip_address, port, polling_interval_ms, status) VALUES (?, ?, ?, ?, ?, ?)');
+        devices.forEach(d => stmt.run(d.id, d.name, d.ip_address, d.port, d.polling_interval_ms, d.status || 'Offline'));
+        stmt.finalize();
+      }
     }
 
-    if (Array.isArray(variables) && variables.length > 0) {
+    if (Array.isArray(variables)) {
       db.run('DELETE FROM variables');
-      const stmt = db.prepare('INSERT INTO variables (id, device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, grid_layout, color, category, options) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-      variables.forEach(v => stmt.run(v.id, v.device_id, v.name, v.display_name, v.type, v.unit || '', v.modbus_address, v.modbus_type, v.decimals || 0, v.widget_type || 'value', typeof v.grid_layout === 'object' ? JSON.stringify(v.grid_layout) : (v.grid_layout || '{}'), v.color || '#3b82f6', v.category || 'supervision', typeof v.options === 'object' ? JSON.stringify(v.options) : (v.options || '{}')));
-      stmt.finalize();
+      if (variables.length > 0) {
+        const stmt = db.prepare('INSERT INTO variables (id, device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, grid_layout, color, category, options) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        variables.forEach(v => stmt.run(v.id, v.device_id, v.name, v.display_name, v.type, v.unit || '', v.modbus_address, v.modbus_type, v.decimals || 0, v.widget_type || 'value', typeof v.grid_layout === 'object' ? JSON.stringify(v.grid_layout) : (v.grid_layout || '{}'), v.color || '#3b82f6', v.category || 'supervision', typeof v.options === 'object' ? JSON.stringify(v.options) : (v.options || '{}')));
+        stmt.finalize();
+      }
     }
 
     if (Array.isArray(alarm_configs)) {
       db.run('DELETE FROM alarm_configs');
-      const stmt = db.prepare('INSERT INTO alarm_configs (id, device_id, name, description, modbus_address, modbus_type, condition_type, condition_value, severity, action_measures, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-      alarm_configs.forEach(a => stmt.run(a.id, a.device_id || 1, a.name, a.description || '', a.modbus_address, a.modbus_type, a.condition_type, a.condition_value, a.severity || 'Alta', a.action_measures || '', a.enabled !== undefined ? a.enabled : 1));
-      stmt.finalize();
+      if (alarm_configs.length > 0) {
+        const stmt = db.prepare('INSERT INTO alarm_configs (id, device_id, name, description, modbus_address, modbus_type, condition_type, condition_value, severity, action_measures, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        alarm_configs.forEach(a => stmt.run(a.id, a.device_id || 1, a.name, a.description || '', a.modbus_address, a.modbus_type, a.condition_type, a.condition_value, a.severity || 'Alta', a.action_measures || '', a.enabled !== undefined ? a.enabled : 1));
+        stmt.finalize();
+      }
     }
 
     if (Array.isArray(cameras)) {
       db.run('DELETE FROM cameras');
-      const stmt = db.prepare('INSERT INTO cameras (id, name, url) VALUES (?, ?, ?)');
-      cameras.forEach(c => stmt.run(c.id, c.name, c.url));
-      stmt.finalize();
+      if (cameras.length > 0) {
+        const stmt = db.prepare('INSERT INTO cameras (id, name, url) VALUES (?, ?, ?)');
+        cameras.forEach(c => stmt.run(c.id, c.name, c.url));
+        stmt.finalize();
+      }
     }
 
     if (Array.isArray(system_settings)) {
       db.run('DELETE FROM system_settings');
-      const stmt = db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)');
-      system_settings.forEach(s => stmt.run(s.key, typeof s.value === 'object' ? JSON.stringify(s.value) : s.value));
-      stmt.finalize();
+      if (system_settings.length > 0) {
+        const stmt = db.prepare('INSERT INTO system_settings (key, value) VALUES (?, ?)');
+        system_settings.forEach(s => stmt.run(s.key, typeof s.value === 'object' ? JSON.stringify(s.value) : s.value));
+        stmt.finalize();
+      }
     }
 
     db.run('COMMIT', (err) => {
       if (err) return res.status(500).json({ error: err.message });
-      plc.reloadDevices();
-      if (plc.loadAlarmConfigs) plc.loadAlarmConfigs();
+      if (plc && plc.reloadDevices) plc.reloadDevices();
+      if (plc && plc.loadAlarmConfigs) plc.loadAlarmConfigs();
+      if (plc && plc.loadGeneralConfig) plc.loadGeneralConfig();
+
+      logAudit('Admin', 'CONFIG_IMPORT', 'Restauração de Backup', '', 'Configuração restaurada', 'SUCESSO');
+
+      db.get(`SELECT value FROM system_settings WHERE key = 'general_config'`, [], (e, r) => {
+        if (r) {
+          try { io.emit('general_config_updated', JSON.parse(r.value)); } catch(err) {}
+        }
+      });
+      db.get(`SELECT value FROM system_settings WHERE key = 'lighting_config'`, [], (e, r) => {
+        if (r) {
+          try { io.emit('lighting_config_updated', JSON.parse(r.value)); } catch(err) {}
+        }
+      });
+
       io.emit('variables_updated');
       io.emit('alarms_updated');
-      io.emit('lighting_config_updated');
       res.json({ success: true });
     });
   });
@@ -540,11 +564,11 @@ app.get('/api/history/export/csv', (req, res) => {
       }
     }
 
-    let csv = '\uFEFFData/Hora;Variável;Tag Interna;Valor;Unidade\n';
+    let csv = '\uFEFFData/Hora;Variável;Tag Interna;Valor;Unidade\r\n';
     filteredRows.forEach(r => {
       const formattedTime = new Date(r.timestamp).toLocaleString('pt-BR');
-      const valStr = typeof r.value === 'number' ? r.value.toString().replace('.', ',') : r.value;
-      csv += `"${formattedTime}";"${r.display_name}";"${r.name}";"${valStr}";"${r.unit || ''}"\n`;
+      const valStr = typeof r.value === 'number' ? r.value.toString().replace('.', ',') : (r.value ?? '');
+      csv += `"${formattedTime}";"${(r.display_name || '').replace(/"/g, '""')}";"${(r.name || '').replace(/"/g, '""')}";"${valStr}";"${(r.unit || '').replace(/"/g, '""')}"\r\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -565,13 +589,13 @@ app.get('/api/alarm_history/export/csv', (req, res) => {
   db.all(sql, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    let csv = '\uFEFFData/Hora Disparo;Data/Hora Resolução;Nome da Falha/Alarme;CLP de Origem;Criticidade;Status;Medidas Recomendadas\n';
+    let csv = '\uFEFFData/Hora Disparo;Data/Hora Resolução;Nome da Falha/Alarme;CLP de Origem;Criticidade;Status;Medidas Recomendadas\r\n';
     rows.forEach(r => {
       const trigTime = r.trigger_time ? new Date(r.trigger_time).toLocaleString('pt-BR') : '';
       const resTime = r.resolve_time ? new Date(r.resolve_time).toLocaleString('pt-BR') : 'Em Aberto (Ativo)';
       const statusText = r.status === 'ACTIVE' ? '🔴 ATIVO' : '🟢 RESOLVIDO';
-      const cleanMeasures = (r.action_measures || '').replace(/"/g, '""').replace(/\n/g, ' ');
-      csv += `"${trigTime}";"${resTime}";"${r.name}";"${r.device_name || 'CLP Principal'}";"${r.severity}";"${statusText}";"${cleanMeasures}"\n`;
+      const cleanMeasures = (r.action_measures || '').replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      csv += `"${trigTime}";"${resTime}";"${(r.name || '').replace(/"/g, '""')}";"${(r.device_name || 'CLP Principal').replace(/"/g, '""')}";"${r.severity || ''}";"${statusText}";"${cleanMeasures}"\r\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

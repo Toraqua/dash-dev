@@ -31,19 +31,24 @@ function TableWidget({ v, val, history = [] }) {
 
   const handleDownload = () => {
     if (!sortedData.length) return;
-    const csvRows = sortedData.map(d => ({
-      Variavel: v.display_name,
-      Valor: d.val,
-      Unidade: v.unit || '',
-      DataHora: d.time
-    }));
+    const csvRows = sortedData.map(d => {
+      const valStr = typeof d.val === 'number' ? d.val.toString().replace('.', ',') : (d.val ?? '');
+      const timeStr = d.time ? new Date(d.time).toLocaleString('pt-BR') : '';
+      return {
+        'Data / Hora': `"${timeStr}"`,
+        'Variável': `"${(v.display_name || '').replace(/"/g, '""')}"`,
+        'Valor': `"${valStr}"`,
+        'Unidade': `"${(v.unit || '').replace(/"/g, '""')}"`
+      };
+    });
     const headers = Object.keys(csvRows[0]).join(';');
-    const rows = csvRows.map(r => Object.values(r).join(';')).join('\n');
-    const blob = new Blob([headers + '\n' + rows], { type: 'text/csv;charset=utf-8;' });
+    const rows = csvRows.map(r => Object.values(r).join(';')).join('\r\n');
+    const csvContent = '\uFEFF' + headers + '\r\n' + rows;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${v.name}_historico.csv`;
+    a.download = `Histórico_${v.name || 'variavel'}_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
