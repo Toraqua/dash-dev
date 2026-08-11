@@ -481,7 +481,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
             breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 767, xxs: 0 }}
             cols={{ lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }}
             rowHeight={100}
-            isDraggable={true}
+            isDraggable={isEditing}
             isResizable={isEditing}
             onLayoutChange={handleLayoutChange}
             onDragStop={() => {
@@ -957,7 +957,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                 </div>
                 <div style={{ width: '100%', height: '100%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {c.url ? (
-                    <iframe src={c.url} style={{ width: '100%', height: '100%', border: 'none' }} title={c.name}></iframe>
+                    <iframe src={c.url} style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }} title={c.name}></iframe>
                   ) : (
                     <div style={{ color: 'var(--text-secondary)' }}>Sem sinal (URL inválida)</div>
                   )}

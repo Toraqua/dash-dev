@@ -591,6 +591,7 @@ body {
     margin-bottom: 0.5rem !important;
     height: auto !important;
     min-height: 170px !important;
+    touch-action: pan-y !important;
   }
 
   .react-resizable-handle {
