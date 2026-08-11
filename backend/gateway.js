@@ -13,13 +13,15 @@ class GatewayService {
     this.ensureKernelNetworkSettings();
   }
 
-  // --- KERNEL DUAL-INTERFACE STABILITY (rp_filter loose mode) ---
+  // --- KERNEL DUAL-INTERFACE STABILITY (rp_filter loose mode & EEE fix for Pi 3) ---
   async ensureKernelNetworkSettings() {
     // Loose mode (rp_filter=2) prevents Linux kernel from dropping packets on dual-interface setups
     await this.execPromise('sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null || true');
     await this.execPromise('sysctl -w net.ipv4.conf.default.rp_filter=2 2>/dev/null || true');
     await this.execPromise('sysctl -w net.ipv4.conf.eth0.rp_filter=2 2>/dev/null || true');
     await this.execPromise('sysctl -w net.ipv4.conf.wlan0.rp_filter=2 2>/dev/null || true');
+    // Disable EEE (Energy Efficient Ethernet) on Pi 3 which puts PHY to sleep with PLCs
+    await this.execPromise('ethtool --set-eee eth0 eee off 2>/dev/null || true');
   }
 
   // --- AUDIT LOGGER ---
