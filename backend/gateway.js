@@ -166,8 +166,9 @@ class GatewayService {
       const { interface: iface, enabled, mode, ip_address, netmask_cidr, gateway, dns,
               is_default_route, route_metric, wifi_ssid, wifi_security, wifi_password } = config;
 
-      // Determine the metric to use
+      // Determine metric and never-default option
       const metric = parseInt(route_metric) || (iface === 'eth0' ? 100 : 200);
+      const neverDefault = is_default_route ? 'no' : 'yes';
 
       // 1. Store backup config for Anti-Brick rollback
       db.get('SELECT * FROM gateway_network_config WHERE interface = ?', [iface], async (err, oldRow) => {
@@ -205,45 +206,48 @@ class GatewayService {
             if (iface.startsWith('wlan') && wifi_ssid) {
               // Wi-Fi: connect to SSID first
               sysRes = await this.execPromise(`nmcli dev wifi connect "${wifi_ssid}" password "${wifi_password || ''}" ifname ${iface} 2>/dev/null`);
-              // Apply IP settings on the resulting connection
               const wifiConn = wifi_ssid; // nmcli names the connection after SSID
               if (mode === 'static' && ip_address) {
                 await this.execPromise(
-                  `nmcli connection modify "${wifiConn}" ipv4.method manual ` +
-                  `ipv4.addresses ${ip_address}/${netmask_cidr || 24} ` +
+                  `nmcli connection modify "${wifiConn}" ` +
+                  `ipv4.method manual ` +
+                  `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
                   `ipv4.gateway "${gateway || ''}" ` +
+                  `ipv4.never-default ${neverDefault} ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
-                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${wifiConn}" 2>/dev/null`
+                  `ipv4.route-metric ${metric} 2>/dev/null && ` +
+                  `nmcli connection up "${wifiConn}" 2>/dev/null`
                 );
               } else {
                 await this.execPromise(
-                  `nmcli connection modify "${wifiConn}" ipv4.method auto ` +
-                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${wifiConn}" 2>/dev/null`
+                  `nmcli connection modify "${wifiConn}" ` +
+                  `ipv4.method auto ` +
+                  `ipv4.never-default ${neverDefault} ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && ` +
+                  `nmcli connection up "${wifiConn}" 2>/dev/null`
                 );
               }
             } else if (connName) {
               // Existing ethernet connection profile — modify in place
               if (mode === 'static' && ip_address) {
-                // Derruba a conexão, limpa IPs antigos (DHCP), sobe com IP estático
                 sysRes = await this.execPromise(
                   `nmcli connection modify "${connName}" ` +
                   `ipv4.method manual ` +
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
                   `ipv4.gateway "${gateway || ''}" ` +
+                  `ipv4.never-default ${neverDefault} ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
-                  `nmcli connection down "${connName}" 2>/dev/null ; ` +
-                  `ip addr flush dev ${iface} 2>/dev/null ; ` +
                   `nmcli connection up "${connName}" 2>/dev/null`
                 );
               } else {
-                // DHCP — derruba e sobe para obter novo lease
+                // DHCP
                 sysRes = await this.execPromise(
                   `nmcli connection modify "${connName}" ` +
                   `ipv4.method auto ` +
                   `ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ` +
+                  `ipv4.never-default ${neverDefault} ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
-                  `nmcli connection down "${connName}" 2>/dev/null ; ` +
                   `nmcli connection up "${connName}" 2>/dev/null`
                 );
               }
@@ -256,16 +260,18 @@ class GatewayService {
                   `ipv4.method manual ` +
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
                   `ipv4.gateway "${gateway || ''}" ` +
+                  `ipv4.never-default ${neverDefault} ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
                   `ipv4.route-metric ${metric} 2>/dev/null && ` +
-                  `ip addr flush dev ${iface} 2>/dev/null ; ` +
                   `nmcli connection up ${iface} 2>/dev/null`
                 );
               } else {
                 sysRes = await this.execPromise(
                   `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ` +
                   `ipv4.method auto ` +
-                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up ${iface} 2>/dev/null`
+                  `ipv4.never-default ${neverDefault} ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && ` +
+                  `nmcli connection up ${iface} 2>/dev/null`
                 );
               }
             }
@@ -279,7 +285,7 @@ class GatewayService {
 
             resolve({
               success: true,
-              message: `Configuração aplicada! Métrica da rota: ${metric}. Temporizador Anti-Brick (60s) ativado.`,
+              message: `Configuração aplicada! Rota padrão para internet: ${is_default_route ? 'Sim' : 'Não (never-default)'}. Temporizador Anti-Brick (60s) ativado.`,
               sysOutput: sysRes.output,
               requiresConfirmation: true
             });
