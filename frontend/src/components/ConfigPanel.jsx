@@ -3,7 +3,7 @@ import {
   Save, X, Check, Plus, Trash2, Server, Edit2, TrendingUp, PieChart,
   Gauge, Table, List, Link, MapPin, Image, BarChart2, ScatterChart,
   Layout, Grid, Binary, Clock, Type, Edit3, Activity, BarChart, Info,
-  ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key
+  ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key, Shield, Search, RefreshCw
 } from 'lucide-react';
 
 const BLOCK_TYPES = [
@@ -83,10 +83,55 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     }
   }, [generalConfig]);
 
-  // Users State
   const [users, setUsers] = useState([]);
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'operator' });
   const [editingUserId, setEditingUserId] = useState(null);
+
+  // Audit State
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  const fetchAuditLogs = async () => {
+    setAuditLoading(true);
+    try {
+      const res = await fetch(getBaseUrl() + '/api/audit');
+      if (res.ok) setAuditLogs(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleExportAuditCSV = () => {
+    try {
+      const headers = ['ID', 'Data/Hora', 'Usuario', 'Acao', 'Parametro/Detalhes', 'Valor Anterior', 'Novo Valor', 'Status'];
+      const rows = auditLogs.map(l => [
+        l.id,
+        new Date(l.timestamp).toLocaleString('pt-BR'),
+        `"${l.user || ''}"`,
+        `"${l.action || ''}"`,
+        `"${l.param_name || ''}"`,
+        `"${l.old_value || ''}"`,
+        `"${l.new_value || ''}"`,
+        `"${l.status || ''}"`
+      ]);
+      const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `KRONOX_Auditoria_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showNotification('Relatório de auditoria exportado!', 'success');
+    } catch (e) {
+      showNotification('Erro ao exportar auditoria', 'error');
+    }
+  };
 
   const [notification, setNotification] = useState(null);
 
@@ -505,7 +550,8 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
   };
 
   useEffect(() => {
-    fetchUsers();
+    if (activeTab === 'users') fetchUsers();
+    if (activeTab === 'audit') fetchAuditLogs();
   }, [activeTab]);
 
   const handleAddOrUpdateUser = async () => {
@@ -571,6 +617,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
           <button className={`btn ${activeTab === 'lighting' ? 'btn-primary' : ''}`} style={activeTab !== 'lighting' ? { background: 'rgba(0,0,0,0.04)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' } : {}} onClick={() => setActiveTab('lighting')}>Iluminação (Sidebar)</button>
           <button className={`btn ${activeTab === 'general' ? 'btn-primary' : ''}`} style={activeTab !== 'general' ? { background: 'rgba(0,0,0,0.04)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' } : {}} onClick={() => setActiveTab('general')}>Geral</button>
           <button className={`btn ${activeTab === 'users' ? 'btn-primary' : ''}`} style={activeTab !== 'users' ? { background: 'rgba(0,0,0,0.04)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' } : {}} onClick={() => setActiveTab('users')}>Usuários & Credenciais</button>
+          <button className={`btn ${activeTab === 'audit' ? 'btn-primary' : ''}`} style={activeTab !== 'audit' ? { background: 'rgba(0,0,0,0.04)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' } : {}} onClick={() => setActiveTab('audit')}>Auditoria</button>
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -1283,6 +1330,126 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
               </div>
             ))}
             {users.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Nenhum usuário encontrado.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* ABA DE AUDITORIA DE SEGURANÇA */}
+      {activeTab === 'audit' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h3 style={{ color: 'var(--text-primary)', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Shield size={20} color="#3b82f6" /> Logs de Auditoria & Segurança
+              </h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: 0 }}>
+                Registro cronológico de acessos, escritas Modbus e alterações de configurações.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <button
+                className="btn"
+                onClick={fetchAuditLogs}
+                disabled={auditLoading}
+                style={{ background: 'var(--bg-panel)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', display: 'flex', gap: '0.4rem', alignItems: 'center' }}
+              >
+                <RefreshCw size={15} style={{ animation: auditLoading ? 'spin 1s linear infinite' : 'none' }} />
+                {auditLoading ? 'Atualizando...' : 'Atualizar'}
+              </button>
+
+              <button
+                className="btn btn-primary"
+                onClick={handleExportAuditCSV}
+                style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}
+              >
+                <Download size={15} /> Exportar Auditoria (.CSV)
+              </button>
+            </div>
+          </div>
+
+          {/* Filtro de Busca */}
+          <div style={{ position: 'relative' }}>
+            <Search size={18} color="var(--text-secondary)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Filtrar por usuário, ação ou detalhe..."
+              value={auditSearch}
+              onChange={e => setAuditSearch(e.target.value)}
+              style={{ paddingLeft: '2.5rem', width: '100%' }}
+            />
+          </div>
+
+          {/* Tabela de Audit Logs */}
+          <div style={{ overflowX: 'auto', background: 'var(--bg-subcard)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead>
+                <tr style={{ background: 'rgba(0,0,0,0.3)', borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                  <th style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)' }}>Data / Hora</th>
+                  <th style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)' }}>Usuário</th>
+                  <th style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)' }}>Ação</th>
+                  <th style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)' }}>Detalhes / Parâmetro</th>
+                  <th style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)' }}>Novo Valor</th>
+                  <th style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)', textAlign: 'center' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs
+                  .filter(l => {
+                    if (!auditSearch.trim()) return true;
+                    const q = auditSearch.toLowerCase();
+                    return (
+                      (l.user || '').toLowerCase().includes(q) ||
+                      (l.action || '').toLowerCase().includes(q) ||
+                      (l.param_name || '').toLowerCase().includes(q) ||
+                      (l.new_value || '').toLowerCase().includes(q)
+                    );
+                  })
+                  .map((log, idx) => (
+                    <tr key={log.id || idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        {new Date(log.timestamp).toLocaleString('pt-BR')}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {log.user || 'Sistema'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600,
+                          background: (log.action || '').includes('LOGIN') ? 'rgba(59,130,246,0.15)' : (log.action || '').includes('MODBUS') ? 'rgba(245,158,11,0.15)' : 'rgba(147,51,234,0.15)',
+                          color: (log.action || '').includes('LOGIN') ? '#60a5fa' : (log.action || '').includes('MODBUS') ? '#fbbf24' : '#c084fc'
+                        }}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)' }}>
+                        {log.param_name || '-'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', color: '#10b981' }}>
+                        {log.new_value !== undefined && log.new_value !== '' ? String(log.new_value) : '-'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                          background: log.status === 'FALHA' ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)',
+                          color: log.status === 'FALHA' ? '#ef4444' : '#10b981'
+                        }}>
+                          {log.status || 'SUCESSO'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+
+                {auditLogs.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                      Nenhum registro de auditoria encontrado.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

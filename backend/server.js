@@ -47,6 +47,13 @@ plc.on('alarms_updated', () => {
   io.emit('alarms_updated');
 });
 
+const logAudit = (user, action, paramName, oldValue, newValue, status = 'SUCESSO') => {
+  db.run(
+    `INSERT INTO audit_logs (user, action, param_name, old_value, new_value, status) VALUES (?, ?, ?, ?, ?, ?)`,
+    [String(user || 'Sistema'), String(action || 'OPERACAO'), String(paramName || ''), String(oldValue ?? ''), String(newValue ?? ''), String(status || 'SUCESSO')]
+  );
+};
+
 // --- API de Autenticação ---
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
@@ -54,7 +61,11 @@ app.post('/api/auth/login', (req, res) => {
 
   db.get('SELECT id, username, role FROM users WHERE username = ? AND password = ?', [username, password], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(401).json({ error: 'Credenciais inválidas.' });
+    if (!row) {
+      logAudit(username, 'LOGIN_FALHA', 'Autenticação', '', 'Credenciais inválidas', 'FALHA');
+      return res.status(401).json({ error: 'Credenciais inválidas.' });
+    }
+    logAudit(row.username, 'LOGIN_SUCESSO', 'Autenticação', '', `Nível: ${row.role}`, 'SUCESSO');
     res.json({ success: true, user: row });
   });
 });
@@ -120,10 +131,24 @@ app.delete('/api/users/:id', (req, res) => {
 });
 
 app.get('/api/audit', (req, res) => {
-  db.all('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+  const sql = `
+    SELECT id, user, action, param_name, old_value, new_value, timestamp, status FROM audit_logs
+    UNION ALL
+    SELECT id, COALESCE(username, 'Sistema') as user, action, category as param_name, '' as old_value, details as new_value, timestamp, 'SUCESSO' as status FROM gateway_audit_logs
+    ORDER BY timestamp DESC LIMIT 200
+  `;
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      return db.all('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100', [], (e, r) => res.json(r || []));
+    }
     res.json(rows);
   });
+});
+
+app.post('/api/audit', (req, res) => {
+  const { user, action, param_name, old_value, new_value, status } = req.body;
+  logAudit(user, action, param_name, old_value, new_value, status);
+  res.json({ success: true });
 });
 
 // --- APIs de Dispositivos (PLCs) ---
@@ -233,11 +258,13 @@ app.get('/api/history/:variableId', (req, res) => {
 
 // --- API Gravação Modbus ---
 app.post('/api/modbus/write', async (req, res) => {
-  const { device_id, modbus_type, address, value, decimals } = req.body;
+  const { device_id, modbus_type, address, value, decimals, username } = req.body;
   try {
     await plc.writeModbus(device_id, modbus_type, address, value, decimals);
+    logAudit(username || 'Operador', 'ESCRITA_MODBUS', `Dispositivo ${device_id} [${modbus_type} #${address}]`, '', value, 'SUCESSO');
     res.json({ success: true });
   } catch(e) {
+    logAudit(username || 'Operador', 'ESCRITA_MODBUS', `Dispositivo ${device_id} [${modbus_type} #${address}]`, '', value, 'FALHA');
     res.status(500).json({ error: e.message });
   }
 });
