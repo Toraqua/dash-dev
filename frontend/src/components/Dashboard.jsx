@@ -178,8 +178,15 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
   const [inputValues, setInputValues] = useState({});
   const [snapCounter, setSnapCounter] = useState(0);
 
-  const [lastReadTimes, setLastReadTimes] = useState({});
-  const [nowMs, setNowMs] = useState(Date.now());
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobileView = windowWidth <= 768 || (width > 0 && width <= 768);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 5000);
@@ -473,7 +480,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
         </div>
       ) : (
         <div ref={containerRef} style={{ width: '100%', minHeight: '500px' }}>
-          {width > 0 && width <= 768 ? (
+          {isMobileView ? (
             <div className="dashboard-grid-mobile" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
               {variables.map((v, index) => {
                 let l = {};
@@ -946,6 +953,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
               rowHeight={100}
               isDraggable={isEditing}
               isResizable={isEditing}
+              draggableCancel={!isEditing ? ".card" : undefined}
               onLayoutChange={handleLayoutChange}
               onDragStop={() => {
                 if (!isEditing) {

@@ -798,3 +798,9 @@ body {
     white-space: nowrap;
   }
 }
+
+/* Prevenir travamento de seleção do react-draggable */
+body.react-draggable-transparent-selection {
+  user-select: auto !important;
+  -webkit-user-select: auto !important;
+}
