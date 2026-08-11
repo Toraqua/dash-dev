@@ -176,8 +176,8 @@ class GatewayService {
       const { interface: iface, enabled, mode, ip_address, netmask_cidr, gateway, dns,
               is_default_route, route_metric, wifi_ssid, wifi_security, wifi_password } = config;
 
-      // Determine metric and never-default option
-      const metric = parseInt(route_metric) || (iface === 'eth0' ? 100 : 200);
+      // Determine metric and never-default option (eth0 gets low metric 10 to win over wlan0)
+      const metric = parseInt(route_metric) || (iface === 'eth0' ? 10 : 200);
       const neverDefault = is_default_route ? 'no' : 'yes';
 
       // 1. Store backup config for Anti-Brick rollback
