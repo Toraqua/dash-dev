@@ -223,12 +223,22 @@ class PLCService extends EventEmitter {
 
         let finalValue;
         if (readSuccess) {
-          if (v.type === 'analog') {
+          if (opts.bit_index !== undefined && opts.bit_index !== null && parseInt(opts.bit_index) >= 0 && (v.modbus_type === 'holding' || v.modbus_type === 'input')) {
+            const bitIdx = parseInt(opts.bit_index);
+            finalValue = ((rawValue >> bitIdx) & 1) === 1;
+          } else if (v.type === 'analog') {
+            let val = typeof rawValue === 'number' ? rawValue : 0;
+            if (opts.scale !== undefined && opts.scale !== null && opts.scale !== '' && !isNaN(opts.scale) && parseFloat(opts.scale) !== 1) {
+              val = val * parseFloat(opts.scale);
+            }
+            if (opts.offset !== undefined && opts.offset !== null && opts.offset !== '' && !isNaN(opts.offset) && parseFloat(opts.offset) !== 0) {
+              val = val + parseFloat(opts.offset);
+            }
             if (v.decimals > 0 && dataFormat !== '32_float') {
               const divisor = Math.pow(10, v.decimals || 0);
-              finalValue = (rawValue || 0) / divisor;
+              finalValue = val / divisor;
             } else {
-              finalValue = rawValue;
+              finalValue = val;
             }
           } else if (v.type === 'boolean') {
             finalValue = Boolean(rawValue);

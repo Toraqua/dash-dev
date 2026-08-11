@@ -40,11 +40,26 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
   const [newDevice, setNewDevice] = useState({ name: '', ip_address: '192.168.0.10', port: 502, polling_interval_ms: 1000 });
   const [editingDeviceId, setEditingDeviceId] = useState(null);
 
+  const defaultVarOptions = {
+    data_format: '16_int',
+    endianness: 'ABCD',
+    scale: 1,
+    offset: 0,
+    bit_index: -1,
+    min_val: 0,
+    max_val: 100,
+    label_off: 'DESLIGADO',
+    label_on: 'LIGADO',
+    color_off: '#ef4444',
+    color_on: '#22c55e'
+  };
+
   const [newVar, setNewVar] = useState({
     device_id: devices.length > 0 ? devices[0].id : '',
     name: '', display_name: '', type: 'analog', unit: '',
     modbus_address: 0, modbus_type: 'holding', decimals: 0,
-    widget_type: 'value', color: '#3b82f6', category: 'supervision'
+    widget_type: 'value', color: '#3b82f6', category: 'supervision',
+    options: { ...defaultVarOptions }
   });
   const [editingVarId, setEditingVarId] = useState(null);
 
@@ -434,7 +449,13 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
       if (response.ok) {
         showNotification(editingVarId ? 'Variável atualizada!' : 'Variável adicionada!', 'success');
-        setNewVar({ ...newVar, name: '', display_name: '' });
+        setNewVar({
+          device_id: devices.length > 0 ? devices[0].id : '',
+          name: '', display_name: '', type: 'analog', unit: '',
+          modbus_address: 0, modbus_type: 'holding', decimals: 0,
+          widget_type: 'value', color: '#3b82f6', category: 'supervision',
+          options: { ...defaultVarOptions }
+        });
         setEditingVarId(null);
         if (onRefresh) onRefresh();
       } else {
@@ -465,15 +486,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
       color: v.color || '#3b82f6',
       category: v.category || 'supervision',
       options: {
-        label_off: 'DESLIGADO',
-        label_on: 'LIGADO',
-        color_off: '#ef4444',
-        color_on: '#22c55e',
-        bit_index: -1,
-        min_val: 0,
-        max_val: 100,
-        data_format: '16_int',
-        endianness: 'ABCD',
+        ...defaultVarOptions,
         ...parsedOpts
       }
     });
@@ -788,6 +801,36 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                       <option value="CDAB">CDAB (Little word e big byte)</option>
                     </select>
                   </div>
+
+                  <div className="form-group" style={{ marginBottom: 0, width: '90px' }}>
+                    <label className="form-label">Escala</label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-input"
+                      value={newVar.options?.scale !== undefined ? newVar.options.scale : 1}
+                      onChange={e => setNewVar({
+                        ...newVar,
+                        options: { ...(newVar.options || {}), scale: parseFloat(e.target.value) || 1 }
+                      })}
+                      title="Fator de multiplicação da escala (padrão 1.0)"
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0, width: '90px' }}>
+                    <label className="form-label">Offset</label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-input"
+                      value={newVar.options?.offset !== undefined ? newVar.options.offset : 0}
+                      onChange={e => setNewVar({
+                        ...newVar,
+                        options: { ...(newVar.options || {}), offset: parseFloat(e.target.value) || 0 }
+                      })}
+                      title="Valor de offset/deslocamento (padrão 0.0)"
+                    />
+                  </div>
                 </>
               )}
 
@@ -970,27 +1013,39 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
           <h3 style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>Variáveis Mapeadas</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {variables.map(v => (
-              <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', background: 'var(--bg-subcard)', borderRadius: '8px', alignItems: 'center', border: '1px solid var(--border-color)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: v.color }}></div>
-                  <div>
-                    <strong>{v.display_name}</strong> <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>({v.name})</span>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                      Modbus {v.modbus_type.toUpperCase()} Addr: {v.modbus_address} | {v.decimals} decimals | Widget: {v.widget_type}
+            {variables.map(v => {
+              let opts = {};
+              try { opts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {}); } catch (e) { }
+              const isWordType = v.modbus_type === 'holding' || v.modbus_type === 'input';
+              const formatText = isWordType ? (opts.data_format || '16_int') : v.modbus_type.toUpperCase();
+              const endianText = isWordType ? (opts.endianness || 'ABCD') : '';
+              return (
+                <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', background: 'var(--bg-subcard)', borderRadius: '8px', alignItems: 'center', border: '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: v.color }}></div>
+                    <div>
+                      <strong>{v.display_name}</strong> <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>({v.name})</span>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                        Modbus {v.modbus_type.toUpperCase()} Addr: {v.modbus_address}
+                        {isWordType && ` | Formato: ${formatText} | Endian: ${endianText}`}
+                        {opts.scale !== undefined && opts.scale !== 1 && ` | Escala: x${opts.scale}`}
+                        {opts.offset !== undefined && opts.offset !== 0 && ` | Offset: ${opts.offset > 0 ? '+' : ''}${opts.offset}`}
+                        {opts.bit_index !== undefined && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
+                        {` | ${v.decimals} decimais | Widget: ${v.widget_type}`}
+                      </div>
                     </div>
                   </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--color-primary)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleEditVariable(v)}>
+                      <Edit2 size={16} />
+                    </button>
+                    <button className="btn" style={{ background: 'rgba(239,68,68,0.2)', color: 'var(--color-danger)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleDeleteVariable(v.id)}>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--color-primary)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleEditVariable(v)}>
-                    <Edit2 size={16} />
-                  </button>
-                  <button className="btn" style={{ background: 'rgba(239,68,68,0.2)', color: 'var(--color-danger)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleDeleteVariable(v.id)}>
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {variables.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Nenhuma variável configurada.</p>}
           </div>
         </div>
