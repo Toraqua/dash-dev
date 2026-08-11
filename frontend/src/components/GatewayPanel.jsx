@@ -34,6 +34,7 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
 
   // Ping state
   const [pingHost, setPingHost] = useState('');
+  const [pingInterface, setPingInterface] = useState('auto');
   const [pingLoading, setPingLoading] = useState(false);
   const [pingResult, setPingResult] = useState(null);
   const [pingHistory, setPingHistory] = useState([]);
@@ -73,7 +74,10 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
       const res = await fetch(getBaseUrl() + '/api/gateway/ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: pingHost.trim() })
+        body: JSON.stringify({
+          host: pingHost.trim(),
+          interface: pingInterface !== 'auto' ? pingInterface : undefined
+        })
       });
       const data = await res.json();
       setPingResult(data);
@@ -965,27 +969,42 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
             </div>
           </div>
 
-          {/* Input + Button */}
-          <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', alignItems: 'flex-end' }}>
-            <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+          {/* Input + Interface Selector + Button */}
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: '1rem', marginBottom: '1.5rem', alignItems: 'flex-end' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <Globe size={14} /> Endereço IP ou Hostname
               </label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="ex: 192.168.0.1 ou google.com"
+                placeholder="ex: 192.168.1.5 ou google.com"
                 value={pingHost}
                 onChange={e => setPingHost(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !pingLoading && handlePing()}
                 style={{ fontSize: '1rem' }}
               />
             </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Network size={14} /> Interface de Saída
+              </label>
+              <select
+                className="form-input"
+                value={pingInterface}
+                onChange={e => setPingInterface(e.target.value)}
+                style={{ fontSize: '0.9rem' }}
+              >
+                <option value="auto">Automático (Tabela de Rotas)</option>
+                <option value="eth0">Forçar Ethernet 0 (eth0)</option>
+                <option value="wlan0">Forçar Wi-Fi (wlan0)</option>
+              </select>
+            </div>
             <button
               className="btn btn-primary"
               onClick={handlePing}
               disabled={pingLoading}
-              style={{ padding: '0.65rem 1.5rem', minWidth: '130px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              style={{ padding: '0.65rem 1.5rem', minWidth: '130px', display: 'flex', alignItems: 'center', gap: '0.5rem', height: '42px' }}
             >
               {pingLoading
                 ? <><RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> Pingando...</>

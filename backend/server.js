@@ -685,8 +685,8 @@ app.get('/api/gateway/audit', async (req, res) => {
 // 6. PING UTILITY
 app.post('/api/gateway/ping', async (req, res) => {
   try {
-    const { host } = req.body;
-    const result = await gatewayService.pingHost(host);
+    const { host, interface: iface } = req.body;
+    const result = await gatewayService.pingHost(host, iface);
     res.json(result);
   } catch(e) {
     res.status(500).json({ error: e.message });

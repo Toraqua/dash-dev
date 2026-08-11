@@ -642,19 +642,20 @@ class GatewayService {
   }
 
   // --- PING UTILITY ---
-  async pingHost(host) {
+  async pingHost(host, iface) {
     if (!host || !/^[a-zA-Z0-9._\-]+$/.test(host)) {
       return { success: false, output: 'Host inválido ou não especificado.' };
     }
-    // Use ping -c 4 on Linux, ping -n 4 on Windows (fallback)
     const isWindows = process.platform === 'win32';
+    const ifaceArg = (!isWindows && iface && /^[a-zA-Z0-9]+$/.test(iface)) ? `-I ${iface} ` : '';
     const cmd = isWindows
       ? `ping -n 4 ${host}`
-      : `ping -c 4 -W 2 ${host}`;
+      : `ping ${ifaceArg}-c 4 -W 2 ${host}`;
     const res = await this.execPromise(cmd);
     return {
       success: res.success,
       host,
+      iface: iface || 'auto',
       output: res.output || 'Sem saída do comando ping.',
       timestamp: new Date().toISOString()
     };
