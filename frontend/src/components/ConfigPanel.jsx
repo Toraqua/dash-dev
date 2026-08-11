@@ -1180,7 +1180,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                               : genConfig.system_logo
                           }
                           alt="Preview Logo"
-                          style={{ height: '36px', maxWidth: '160px', objectFit: 'contain' }}
+                          style={{ height: '44px', maxWidth: '192px', objectFit: 'contain' }}
                         />
                         <button className="btn" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--color-danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem', cursor: 'pointer' }} onClick={() => setGenConfig({ ...genConfig, system_logo: '' })}>
                           <Trash2 size={14} /> Remover
