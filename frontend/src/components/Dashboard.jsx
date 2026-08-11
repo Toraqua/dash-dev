@@ -1431,8 +1431,9 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
           </ResponsiveGridLayout>
         )}
       </div>
-    </div>
-  );
+    )}
+  </div>
+);
 }
 
 export default Dashboard;
