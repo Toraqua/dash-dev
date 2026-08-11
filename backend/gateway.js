@@ -224,20 +224,27 @@ class GatewayService {
             } else if (connName) {
               // Existing ethernet connection profile — modify in place
               if (mode === 'static' && ip_address) {
+                // Derruba a conexão, limpa IPs antigos (DHCP), sobe com IP estático
                 sysRes = await this.execPromise(
                   `nmcli connection modify "${connName}" ` +
                   `ipv4.method manual ` +
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
                   `ipv4.gateway "${gateway || ''}" ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
-                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${connName}" 2>/dev/null`
+                  `ipv4.route-metric ${metric} 2>/dev/null && ` +
+                  `nmcli connection down "${connName}" 2>/dev/null ; ` +
+                  `ip addr flush dev ${iface} 2>/dev/null ; ` +
+                  `nmcli connection up "${connName}" 2>/dev/null`
                 );
               } else {
+                // DHCP — derruba e sobe para obter novo lease
                 sysRes = await this.execPromise(
                   `nmcli connection modify "${connName}" ` +
                   `ipv4.method auto ` +
                   `ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ` +
-                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${connName}" 2>/dev/null`
+                  `ipv4.route-metric ${metric} 2>/dev/null && ` +
+                  `nmcli connection down "${connName}" 2>/dev/null ; ` +
+                  `nmcli connection up "${connName}" 2>/dev/null`
                 );
               }
             } else {
@@ -250,7 +257,9 @@ class GatewayService {
                   `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
                   `ipv4.gateway "${gateway || ''}" ` +
                   `ipv4.dns "${dns || '8.8.8.8'}" ` +
-                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up ${iface} 2>/dev/null`
+                  `ipv4.route-metric ${metric} 2>/dev/null && ` +
+                  `ip addr flush dev ${iface} 2>/dev/null ; ` +
+                  `nmcli connection up ${iface} 2>/dev/null`
                 );
               } else {
                 sysRes = await this.execPromise(
