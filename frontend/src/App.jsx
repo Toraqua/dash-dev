@@ -44,12 +44,18 @@ function App() {
   const [devices, setDevices] = useState([]);
   const [activeAlarmsCount, setActiveAlarmsCount] = useState(0);
 
-  const [generalConfig, setGeneralConfig] = useState({
-    system_name: 'KRONOX OS',
-    system_logo: '/logo.png',
-    dashboard_title: 'Visão Geral da Estação',
-    timezone: 'America/Sao_Paulo',
-    history_interval_seconds: 15
+  const [generalConfig, setGeneralConfig] = useState(() => {
+    try {
+      const cached = localStorage.getItem('kronox_general_config');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return {
+      system_name: 'KRONOX OS',
+      system_logo: '/logo.png',
+      dashboard_title: 'Visão Geral da Estação',
+      timezone: 'America/Sao_Paulo',
+      history_interval_seconds: 15
+    };
   });
 
   const [lightingConfig, setLightingConfig] = useState({
@@ -112,7 +118,11 @@ function App() {
       if (camRes.ok) setCameras(await camRes.json());
       if (devRes.ok) setDevices(await devRes.json());
       if (lightRes.ok) setLightingConfig(await lightRes.json());
-      if (genRes.ok) setGeneralConfig(await genRes.json());
+      if (genRes.ok) {
+        const genData = await genRes.json();
+        setGeneralConfig(genData);
+        try { localStorage.setItem('kronox_general_config', JSON.stringify(genData)); } catch(e) {}
+      }
       
       fetchActiveAlarms(getBaseUrl());
     } catch (e) {
@@ -247,6 +257,7 @@ function App() {
 
     newSocket.on('general_config_updated', (cfg) => {
       setGeneralConfig(cfg);
+      try { localStorage.setItem('kronox_general_config', JSON.stringify(cfg)); } catch(e) {}
     });
 
     newSocket.on('disconnect', () => {
@@ -268,7 +279,7 @@ function App() {
             ) : (
               <Zap size={28} color="var(--color-primary)" />
             )}
-            <span>{generalConfig.system_name || 'KRONOX OS'}</span>
+            <span>{generalConfig.system_name || ''}</span>
           </div>
           <button 
             onClick={toggleTheme}
