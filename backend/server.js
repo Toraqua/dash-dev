@@ -671,16 +671,51 @@ app.get('/api/history/export/csv', (req, res) => {
       }
     }
 
-    let csv = '\uFEFFData/Hora;Variável;Tag Interna;Valor;Unidade\r\n';
+    // Build Pivot Table: Group variables into columns with units in headers
+    const varOrder = [];
+    const varInfoMap = {};
+    const timeGroupMap = {};
+
     filteredRows.forEach(r => {
-      const formattedTime = new Date(r.timestamp).toLocaleString('pt-BR');
+      const varKey = r.name || r.display_name;
+      if (!varInfoMap[varKey]) {
+        const unitSuffix = r.unit ? ` (${r.unit})` : '';
+        const headerText = `${r.display_name || varKey}${unitSuffix}`;
+        varInfoMap[varKey] = headerText;
+        varOrder.push(varKey);
+      }
+
+      const timeKey = new Date(r.timestamp).toLocaleString('pt-BR');
+      if (!timeGroupMap[timeKey]) {
+        timeGroupMap[timeKey] = {};
+      }
       const valStr = typeof r.value === 'number' ? r.value.toString().replace('.', ',') : (r.value ?? '');
-      csv += `"${formattedTime}";"${(r.display_name || '').replace(/"/g, '""')}";"${(r.name || '').replace(/"/g, '""')}";"${valStr}";"${(r.unit || '').replace(/"/g, '""')}"\r\n`;
+      timeGroupMap[timeKey][varKey] = valStr;
     });
+
+    const headers = ['Data/Hora', ...varOrder.map(k => `"${varInfoMap[k].replace(/"/g, '""')}"`)].join(';');
+
+    const csvLines = [headers];
+    Object.keys(timeGroupMap).forEach(timeKey => {
+      const values = timeGroupMap[timeKey];
+      const row = [ `"${timeKey}"` ];
+      varOrder.forEach(k => {
+        const val = values[k];
+        if (val !== undefined && val !== null) {
+          row.push(`"${val.toString().replace(/"/g, '""')}"`);
+        } else {
+          row.push('""');
+        }
+      });
+      csvLines.push(row.join(';'));
+    });
+
+    const csvString = csvLines.join('\r\n');
+    const buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csvString, 'utf-8')]);
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=telemetria_kronox.csv');
-    res.send(csv);
+    res.send(buffer);
   });
 });
 
@@ -696,7 +731,7 @@ app.get('/api/alarm_history/export/csv', (req, res) => {
   db.all(sql, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    let csv = '\uFEFFData/Hora Disparo;Data/Hora Resolução;Nome da Falha/Alarme;CLP de Origem;Criticidade;Status;Medidas Recomendadas\r\n';
+    let csv = 'Data/Hora Disparo;Data/Hora Resolução;Nome da Falha/Alarme;CLP de Origem;Criticidade;Status;Medidas Recomendadas\r\n';
     rows.forEach(r => {
       const trigTime = r.trigger_time ? new Date(r.trigger_time).toLocaleString('pt-BR') : '';
       const resTime = r.resolve_time ? new Date(r.resolve_time).toLocaleString('pt-BR') : 'Em Aberto (Ativo)';
@@ -705,9 +740,10 @@ app.get('/api/alarm_history/export/csv', (req, res) => {
       csv += `"${trigTime}";"${resTime}";"${(r.name || '').replace(/"/g, '""')}";"${(r.device_name || 'CLP Principal').replace(/"/g, '""')}";"${r.severity || ''}";"${statusText}";"${cleanMeasures}"\r\n`;
     });
 
+    const buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(csv, 'utf-8')]);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=historico_falhas_kronox.csv');
-    res.send(csv);
+    res.send(buffer);
   });
 });
 

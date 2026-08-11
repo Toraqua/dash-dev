@@ -153,7 +153,7 @@ function AlarmsPanel({ plcState, currentUser, devices = [], generalConfig = {} }
     try {
       const res = await fetch(getBaseUrl() + '/api/alarm_history/export/csv');
       if (!res.ok) throw new Error('Erro ao buscar CSV');
-      const csvText = await res.text();
+      const blob = await res.blob();
       
       const fileName = `Historico_de_Falhas_KRONOX_${new Date().toISOString().slice(0,10)}.csv`;
 
@@ -167,7 +167,7 @@ function AlarmsPanel({ plcState, currentUser, devices = [], generalConfig = {} }
             }]
           });
           const writable = await handle.createWritable();
-          await writable.write(csvText);
+          await writable.write(blob);
           await writable.close();
           return;
         } catch (e) {
@@ -175,7 +175,6 @@ function AlarmsPanel({ plcState, currentUser, devices = [], generalConfig = {} }
         }
       }
 
-      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

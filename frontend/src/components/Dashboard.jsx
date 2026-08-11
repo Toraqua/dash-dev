@@ -31,20 +31,18 @@ function TableWidget({ v, val, history = [] }) {
 
   const handleDownload = () => {
     if (!sortedData.length) return;
+    const headerLabel = v.unit ? `${v.display_name} (${v.unit})` : v.display_name;
     const csvRows = sortedData.map(d => {
       const valStr = typeof d.val === 'number' ? d.val.toString().replace('.', ',') : (d.val ?? '');
       const timeStr = d.time ? new Date(d.time).toLocaleString('pt-BR') : '';
-      return {
-        'Data / Hora': `"${timeStr}"`,
-        'Variável': `"${(v.display_name || '').replace(/"/g, '""')}"`,
-        'Valor': `"${valStr}"`,
-        'Unidade': `"${(v.unit || '').replace(/"/g, '""')}"`
-      };
+      return [
+        `"${timeStr}"`,
+        `"${valStr}"`
+      ].join(';');
     });
-    const headers = Object.keys(csvRows[0]).join(';');
-    const rows = csvRows.map(r => Object.values(r).join(';')).join('\r\n');
-    const csvContent = '\uFEFF' + headers + '\r\n' + rows;
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const headers = `Data / Hora;"${headerLabel.replace(/"/g, '""')}"`;
+    const csvContent = [headers, ...csvRows].join('\r\n');
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

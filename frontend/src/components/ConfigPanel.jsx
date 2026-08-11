@@ -257,7 +257,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
       const res = await fetch(queryUrl);
       if (!res.ok) throw new Error('Erro ao buscar telemetria');
-      const csvText = await res.text();
+      const blob = await res.blob();
 
       const fileName = `Telemetria_Funcionamento_KRONOX_${new Date().toISOString().slice(0, 10)}.csv`;
 
@@ -268,7 +268,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
             types: [{ description: 'Arquivo CSV (*.csv)', accept: { 'text/csv': ['.csv'] } }]
           });
           const writable = await handle.createWritable();
-          await writable.write(csvText);
+          await writable.write(blob);
           await writable.close();
           setShowTelemetryModal(false);
           showNotification('Relatório de telemetria exportado com sucesso!', 'success');
@@ -278,7 +278,6 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
         }
       }
 
-      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
