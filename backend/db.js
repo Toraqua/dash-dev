@@ -182,15 +182,18 @@ function initDb() {
       gateway TEXT DEFAULT '',
       dns TEXT DEFAULT '',
       is_default_route INTEGER DEFAULT 0,
+      route_metric INTEGER DEFAULT 100,
       wifi_ssid TEXT DEFAULT '',
       wifi_security TEXT DEFAULT 'wpa2',
       wifi_password TEXT DEFAULT ''
     )`);
 
-    const insertNet = db.prepare(`INSERT OR IGNORE INTO gateway_network_config (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-    insertNet.run('eth0', 1, 'dhcp', '192.168.1.100', '24', '192.168.1.1', '8.8.8.8, 1.1.1.1', 1);
-    insertNet.run('wlan0', 1, 'dhcp', '192.168.0.105', '24', '192.168.0.1', '8.8.8.8', 0);
-    insertNet.run('wlan1', 0, 'dhcp', '', '', '', '', 0);
+    // Migration: add route_metric column if it doesn't exist
+    db.run(`ALTER TABLE gateway_network_config ADD COLUMN route_metric INTEGER DEFAULT 100`, () => {});
+
+    const insertNet = db.prepare(`INSERT OR IGNORE INTO gateway_network_config (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, route_metric) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insertNet.run('eth0', 1, 'dhcp', '', '', '', '', 1, 100);
+    insertNet.run('wlan0', 1, 'dhcp', '', '', '', '', 1, 200);
     insertNet.finalize();
 
     db.run(`CREATE TABLE IF NOT EXISTS gateway_routes (

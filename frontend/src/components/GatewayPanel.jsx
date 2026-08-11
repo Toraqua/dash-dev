@@ -160,6 +160,7 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
     gateway: '',
     dns: '',
     is_default_route: activeSubTab === 'eth0' ? 1 : 0,
+    route_metric: activeSubTab === 'eth0' ? 100 : 200,
     wifi_ssid: '',
     wifi_security: 'wpa2',
     wifi_password: '',
@@ -541,25 +542,64 @@ function GatewayPanel({ currentUser, variables = [], generalConfig = {}, onRefre
             </div>
           </div>
 
-          {/* Default Route Checkbox & Action Buttons */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-              <input
-                type="checkbox"
-                checked={Boolean(currentNetConfig.is_default_route)}
-                onChange={e => handleUpdateNetConfig('is_default_route', e.target.checked ? 1 : 0)}
-              />
-              <strong>Default route for Internet (Rota Padrão de Saída)</strong>
-            </label>
-
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button className="btn" onClick={fetchGatewayData} style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}>
-                Restore Defaults
-              </button>
-              <button className="btn btn-primary" onClick={handleSaveNetwork}>
-                <Save size={16} /> Salvar & Aplicar
-              </button>
+          {/* Default Route + Metric Section */}
+          <div style={{ marginBottom: '1rem', background: 'var(--bg-subcard)', padding: '1rem 1.25rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1 }}>
+                <label className="ios-switch">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(currentNetConfig.is_default_route)}
+                    onChange={e => handleUpdateNetConfig('is_default_route', e.target.checked ? 1 : 0)}
+                  />
+                  <span className="ios-slider"></span>
+                </label>
+                <div>
+                  <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>Rota Padrão para Internet</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                    Ambas as interfaces podem ter rota padrão simultânea — a métrica define a prioridade
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', align: 'center', gap: '0.75rem', alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.25rem' }}>
+                  <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                    Métrica (prioridade) — menor = maior prioridade
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      max="9999"
+                      className="form-input"
+                      style={{ width: '100px', textAlign: 'center', fontSize: '1rem', fontWeight: 600 }}
+                      value={currentNetConfig.route_metric || (activeSubTab === 'eth0' ? 100 : 200)}
+                      onChange={e => handleUpdateNetConfig('route_metric', parseInt(e.target.value) || 100)}
+                      disabled={!currentNetConfig.is_default_route}
+                    />
+                    <span style={{
+                      padding: '0.3rem 0.7rem', borderRadius: '20px', fontSize: '0.78rem', fontWeight: 600,
+                      background: !currentNetConfig.is_default_route ? 'rgba(100,116,139,0.15)' : (currentNetConfig.route_metric || 999) <= 100 ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
+                      color: !currentNetConfig.is_default_route ? 'var(--text-muted)' : (currentNetConfig.route_metric || 999) <= 100 ? '#10b981' : '#f59e0b',
+                      border: `1px solid ${!currentNetConfig.is_default_route ? 'var(--border-color)' : (currentNetConfig.route_metric || 999) <= 100 ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)'}`,
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {!currentNetConfig.is_default_route ? 'Desativada' : (currentNetConfig.route_metric || 999) <= 100 ? '⬆ Alta Prioridade' : '⬇ Baixa Prioridade'}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
+            <button className="btn" onClick={fetchGatewayData} style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}>
+              <RefreshCw size={15} /> Recarregar do Sistema
+            </button>
+            <button className="btn btn-primary" onClick={handleSaveNetwork}>
+              <Save size={16} /> Salvar & Aplicar
+            </button>
           </div>
         </div>
       )}

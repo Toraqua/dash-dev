@@ -35,119 +35,85 @@ class GatewayService {
     });
   }
 
+  // --- RELIABLE NETWORK STATUS: uses nmcli device show as single source of truth ---
   async getRealSystemNetworkInfo(iface) {
     const real = {
       ip_address: '',
-      netmask_cidr: '',
+      netmask_cidr: '24',
       gateway: '',
       dns: '',
-      mode: '',
+      mode: 'dhcp',
       is_default_route: false,
+      route_metric: null,
       wifi_ssid: '',
       connected: false
     };
 
     try {
-      // 1. Check IP and Netmask (CIDR) from `ip -4 addr show dev <iface>`
-      const ipRes = await this.execPromise(`ip -4 addr show dev ${iface}`);
-      if (ipRes.success && ipRes.output) {
-        const match = ipRes.output.match(/inet\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\/([0-9]+)/);
-        if (match) {
-          real.ip_address = match[1];
-          real.netmask_cidr = match[2];
-          real.connected = true;
-        }
-        if (ipRes.output.includes('dynamic')) {
-          real.mode = 'dhcp';
-        }
-      }
-
-      // 2. Check Gateway & Default Route from `ip route show dev <iface>`
-      const routeRes = await this.execPromise(`ip route show dev ${iface}`);
-      if (routeRes.success && routeRes.output) {
-        const gwMatch = routeRes.output.match(/default via ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
-        if (gwMatch) {
-          real.gateway = gwMatch[1];
-          real.is_default_route = true;
-        } else {
-          const subnetGwMatch = routeRes.output.match(/via ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
-          if (subnetGwMatch) real.gateway = subnetGwMatch[1];
-        }
-      }
-
-      // Check global default route if not found yet
-      if (!real.is_default_route) {
-        const defRouteRes = await this.execPromise(`ip route show default`);
-        if (defRouteRes.success && defRouteRes.output) {
-          if (defRouteRes.output.includes(`dev ${iface}`)) {
-            real.is_default_route = true;
-            const gwMatch = defRouteRes.output.match(/default via ([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
-            if (gwMatch && !real.gateway) real.gateway = gwMatch[1];
-          }
-        }
-      }
-
-      // 3. Check DNS from `nmcli` or `/etc/resolv.conf`
-      const nmcliDns = await this.execPromise(`nmcli -t -f IP4.DNS device show ${iface}`);
-      if (nmcliDns.success && nmcliDns.output) {
-        const dnsList = nmcliDns.output
-          .split('\n')
-          .map(line => line.split(':')[1])
+      // Single reliable call: nmcli device show gives all data at once
+      const showRes = await this.execPromise(`nmcli -t device show ${iface} 2>/dev/null`);
+      if (showRes.success && showRes.output) {
+        const lines = showRes.output.split('\n');
+        const get = (prefix) => {
+          const line = lines.find(l => l.startsWith(prefix + ':'));
+          return line ? line.slice(prefix.length + 1).trim() : null;
+        };
+        const getAll = (prefix) => lines
+          .filter(l => l.startsWith(prefix))
+          .map(l => l.split(':').slice(1).join(':').trim())
           .filter(Boolean);
-        if (dnsList.length > 0) {
-          real.dns = dnsList.join(', ');
-        }
-      }
 
-      if (!real.dns) {
-        const resolvRes = await this.execPromise(`grep nameserver /etc/resolv.conf`);
-        if (resolvRes.success && resolvRes.output) {
-          const dnsList = resolvRes.output
-            .split('\n')
-            .map(l => l.replace('nameserver', '').trim())
-            .filter(ip => ip && ip !== '127.0.0.1' && ip !== '127.0.0.53');
-          if (dnsList.length > 0) real.dns = dnsList.join(', ');
-        }
-      }
+        const state = get('GENERAL.STATE') || '';
+        real.connected = state.includes('connected') && !state.includes('disconnected');
 
-      // 4. Connection Name, Mode & Wi-Fi SSID from `nmcli device show <iface>`
-      const nmcliShow = await this.execPromise(`nmcli -t -f GENERAL.CONNECTION,GENERAL.STATE,IP4.GATEWAY device show ${iface}`);
-      if (nmcliShow.success && nmcliShow.output) {
-        let connName = '';
-        nmcliShow.output.split('\n').forEach(line => {
-          if (line.startsWith('GENERAL.CONNECTION:')) {
-            connName = line.replace('GENERAL.CONNECTION:', '').trim();
-          } else if (line.startsWith('IP4.GATEWAY:') && !real.gateway) {
-            const gw = line.replace('IP4.GATEWAY:', '').trim();
-            if (gw && gw !== '--') real.gateway = gw;
-          } else if (line.startsWith('GENERAL.STATE:')) {
-            const state = line.replace('GENERAL.STATE:', '').trim();
-            if (state.includes('connected')) real.connected = true;
+        // IP address: IP4.ADDRESS[1] = 192.168.1.95/24
+        const ip4addr = get('IP4.ADDRESS[1]');
+        if (ip4addr && ip4addr !== '--') {
+          const parts = ip4addr.split('/');
+          real.ip_address = parts[0];
+          real.netmask_cidr = parts[1] || '24';
+        }
+
+        // Gateway: IP4.GATEWAY
+        const gw = get('IP4.GATEWAY');
+        if (gw && gw !== '--') real.gateway = gw;
+
+        // DNS: IP4.DNS[1], IP4.DNS[2] ...
+        const dnsEntries = getAll('IP4.DNS');
+        if (dnsEntries.length > 0) real.dns = dnsEntries.join(', ');
+
+        // Connection name (SSID for wlan)
+        const connName = get('GENERAL.CONNECTION');
+        if (connName && connName !== '--' && iface.startsWith('wlan')) {
+          real.wifi_ssid = connName;
+        }
+
+        // Route metric & default route from IP4.ROUTE lines
+        // IP4.ROUTE[1]: dst = 0.0.0.0/0, nh = 192.168.1.1, mt = 100
+        const routeLines = getAll('IP4.ROUTE');
+        routeLines.forEach(route => {
+          const isDefault = route.includes('dst = 0.0.0.0/0') || route.includes('dst=0.0.0.0/0');
+          if (isDefault) {
+            real.is_default_route = true;
+            const mtMatch = route.match(/mt\s*=\s*(\d+)/);
+            if (mtMatch) real.route_metric = parseInt(mtMatch[1]);
+            const nhMatch = route.match(/nh\s*=\s*([0-9.]+)/);
+            if (nhMatch && !real.gateway) real.gateway = nhMatch[1];
           }
         });
 
+        // Determine mode via connection profile
         if (connName && connName !== '--') {
-          if (iface.startsWith('wlan')) {
-            real.wifi_ssid = connName;
-          }
-          const methodRes = await this.execPromise(`nmcli -t -f ipv4.method connection show "${connName}"`);
+          const methodRes = await this.execPromise(`nmcli -t -f ipv4.method connection show "${connName}" 2>/dev/null`);
           if (methodRes.success && methodRes.output) {
             const method = methodRes.output.replace('ipv4.method:', '').trim();
             if (method === 'manual') real.mode = 'static';
-            else if (method === 'auto') real.mode = 'dhcp';
+            else real.mode = 'dhcp';
           }
         }
       }
-
-      // Fallback SSID check for Wi-Fi using iwgetid
-      if (iface.startsWith('wlan') && !real.wifi_ssid) {
-        const iwRes = await this.execPromise(`iwgetid -r ${iface} || iwgetid -r`);
-        if (iwRes.success && iwRes.output) {
-          real.wifi_ssid = iwRes.output.trim();
-        }
-      }
     } catch (e) {
-      console.error(`Error reading real network info for ${iface}:`, e);
+      console.error(`[Gateway] Error reading real network info for ${iface}:`, e.message);
     }
 
     return real;
@@ -161,34 +127,32 @@ class GatewayService {
 
         const interfaces = await Promise.all(['eth0', 'wlan0'].map(async (iface) => {
           const stored = rows.find(r => r.interface === iface) || {};
+
+          // Read REAL values from the system
           const real = await this.getRealSystemNetworkInfo(iface);
-
-          const ip_address = real.ip_address || stored.ip_address || '';
-          const netmask_cidr = real.netmask_cidr || stored.netmask_cidr || '24';
-          const gateway = real.gateway || stored.gateway || '';
-          const dns = real.dns || stored.dns || '';
-          const mode = real.mode || stored.mode || 'dhcp';
-          const is_default_route = real.is_default_route ? 1 : (stored.is_default_route !== undefined ? stored.is_default_route : (iface === 'eth0' ? 1 : 0));
-          const wifi_ssid = real.wifi_ssid || stored.wifi_ssid || '';
-          const wifi_security = stored.wifi_security || 'wpa2';
-          const wifi_password = stored.wifi_password || '';
-
-          const isConnected = real.connected;
 
           return {
             interface: iface,
-            enabled: isConnected ? 1 : (stored.enabled !== undefined ? stored.enabled : 1),
-            mode,
-            ip_address,
-            netmask_cidr,
-            gateway,
-            dns,
-            is_default_route,
-            wifi_ssid,
-            wifi_security,
-            wifi_password,
+            // enabled: if IP is assigned = connected
+            enabled: real.connected ? 1 : (stored.enabled !== undefined ? stored.enabled : 1),
+            // mode: prefer real system value
+            mode: real.mode || stored.mode || 'dhcp',
+            // IP fields: prefer real system, fall back to what was stored by user
+            ip_address: real.ip_address || stored.ip_address || '',
+            netmask_cidr: real.netmask_cidr || stored.netmask_cidr || '24',
+            gateway: real.gateway || stored.gateway || '',
+            dns: real.dns || stored.dns || '',
+            // Default route: from real system
+            is_default_route: real.is_default_route ? 1 : (stored.is_default_route || 0),
+            // Metric: from real system, fallback to stored
+            route_metric: real.route_metric !== null ? real.route_metric : (stored.route_metric || (iface === 'eth0' ? 100 : 200)),
+            // WiFi
+            wifi_ssid: real.wifi_ssid || stored.wifi_ssid || '',
+            wifi_security: stored.wifi_security || 'wpa2',
+            wifi_password: stored.wifi_password || '',
+            // Status
             present: true,
-            connected: isConnected
+            connected: real.connected
           };
         }));
 
@@ -199,7 +163,11 @@ class GatewayService {
 
   async applyNetworkConfig(config, user) {
     return new Promise(async (resolve) => {
-      const { interface: iface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, wifi_ssid, wifi_security, wifi_password } = config;
+      const { interface: iface, enabled, mode, ip_address, netmask_cidr, gateway, dns,
+              is_default_route, route_metric, wifi_ssid, wifi_security, wifi_password } = config;
+
+      // Determine the metric to use
+      const metric = parseInt(route_metric) || (iface === 'eth0' ? 100 : 200);
 
       // 1. Store backup config for Anti-Brick rollback
       db.get('SELECT * FROM gateway_network_config WHERE interface = ?', [iface], async (err, oldRow) => {
@@ -208,70 +176,87 @@ class GatewayService {
         // 2. Save new config to SQLite DB
         db.run(
           `INSERT OR REPLACE INTO gateway_network_config 
-           (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, wifi_ssid, wifi_security, wifi_password)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [iface, enabled ? 1 : 0, mode, ip_address, netmask_cidr, gateway, dns, is_default_route ? 1 : 0, wifi_ssid, wifi_security, wifi_password],
+           (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, route_metric, wifi_ssid, wifi_security, wifi_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [iface, enabled ? 1 : 0, mode, ip_address, netmask_cidr, gateway, dns,
+           is_default_route ? 1 : 0, metric, wifi_ssid, wifi_security, wifi_password],
           async (saveErr) => {
             if (saveErr) {
               return resolve({ success: false, message: 'Erro ao gravar no banco: ' + saveErr.message });
             }
 
-            // If other interface is set as default route, update others
-            if (is_default_route) {
-              db.run('UPDATE gateway_network_config SET is_default_route = 0 WHERE interface != ?', [iface]);
-            }
-
             this.logAudit(user, 'NETWORK', `UPDATE_INTERFACE_${iface.toUpperCase()}`, config);
 
-            // 3. Execute NetworkManager (nmcli) commands on Linux
-            const metric = is_default_route ? 10 : (iface === 'eth0' ? 100 : 200);
-            let sysRes = { success: false, output: 'nmcli não executado' };
+            // 3. Execute NetworkManager (nmcli) commands
+            let sysRes = { success: false, output: 'nmcli não disponível neste sistema.' };
 
-            // Check if a nmcli connection profile already exists for this interface
-            const connListRes = await this.execPromise(`nmcli -t -f NAME,DEVICE connection show`);
+            // Detect existing connection profile for this interface
+            const connListRes = await this.execPromise(`nmcli -t -f NAME,DEVICE connection show 2>/dev/null`);
             let connName = null;
             if (connListRes.success && connListRes.output) {
               connListRes.output.split('\n').forEach(line => {
                 const parts = line.split(':');
                 if (parts.length >= 2 && parts[1].trim() === iface) {
-                  connName = parts[0].trim();
+                  if (!connName) connName = parts[0].trim(); // take first match
                 }
               });
             }
 
             if (iface.startsWith('wlan') && wifi_ssid) {
-              // Wi-Fi: connect to SSID
-              const wifiCmd = `nmcli dev wifi connect "${wifi_ssid}" password "${wifi_password || ''}" ifname ${iface}`;
-              sysRes = await this.execPromise(wifiCmd);
-              // After connecting, set IP if static
-              if (sysRes.success && mode === 'static' && ip_address) {
-                await this.execPromise(`nmcli connection modify "${wifi_ssid}" ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric}`);
-                await this.execPromise(`nmcli connection up "${wifi_ssid}"`);
-              } else if (sysRes.success && mode === 'dhcp') {
-                await this.execPromise(`nmcli connection modify "${wifi_ssid}" ipv4.method auto ipv4.route-metric ${metric}`);
-                await this.execPromise(`nmcli connection up "${wifi_ssid}"`);
+              // Wi-Fi: connect to SSID first
+              sysRes = await this.execPromise(`nmcli dev wifi connect "${wifi_ssid}" password "${wifi_password || ''}" ifname ${iface} 2>/dev/null`);
+              // Apply IP settings on the resulting connection
+              const wifiConn = wifi_ssid; // nmcli names the connection after SSID
+              if (mode === 'static' && ip_address) {
+                await this.execPromise(
+                  `nmcli connection modify "${wifiConn}" ipv4.method manual ` +
+                  `ipv4.addresses ${ip_address}/${netmask_cidr || 24} ` +
+                  `ipv4.gateway "${gateway || ''}" ` +
+                  `ipv4.dns "${dns || '8.8.8.8'}" ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${wifiConn}" 2>/dev/null`
+                );
+              } else {
+                await this.execPromise(
+                  `nmcli connection modify "${wifiConn}" ipv4.method auto ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${wifiConn}" 2>/dev/null`
+                );
               }
             } else if (connName) {
-              // Connection profile exists — modify it
+              // Existing ethernet connection profile — modify in place
               if (mode === 'static' && ip_address) {
                 sysRes = await this.execPromise(
-                  `nmcli connection modify "${connName}" ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric} && nmcli connection up "${connName}"`
+                  `nmcli connection modify "${connName}" ` +
+                  `ipv4.method manual ` +
+                  `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
+                  `ipv4.gateway "${gateway || ''}" ` +
+                  `ipv4.dns "${dns || '8.8.8.8'}" ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${connName}" 2>/dev/null`
                 );
               } else {
                 sysRes = await this.execPromise(
-                  `nmcli connection modify "${connName}" ipv4.method auto ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ipv4.route-metric ${metric} && nmcli connection up "${connName}"`
+                  `nmcli connection modify "${connName}" ` +
+                  `ipv4.method auto ` +
+                  `ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up "${connName}" 2>/dev/null`
                 );
               }
             } else {
-              // No connection profile exists — create one
+              // No existing profile — create a new one
               const connType = iface.startsWith('wlan') ? 'wifi' : 'ethernet';
               if (mode === 'static' && ip_address) {
                 sysRes = await this.execPromise(
-                  `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ipv4.method manual ipv4.addresses ${ip_address}/${netmask_cidr || 24} ipv4.gateway "${gateway || ''}" ipv4.dns "${dns || '8.8.8.8'}" ipv4.route-metric ${metric} && nmcli connection up ${iface}`
+                  `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ` +
+                  `ipv4.method manual ` +
+                  `ipv4.addresses "${ip_address}/${netmask_cidr || 24}" ` +
+                  `ipv4.gateway "${gateway || ''}" ` +
+                  `ipv4.dns "${dns || '8.8.8.8'}" ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up ${iface} 2>/dev/null`
                 );
               } else {
                 sysRes = await this.execPromise(
-                  `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ipv4.method auto ipv4.route-metric ${metric} && nmcli connection up ${iface}`
+                  `nmcli connection add type ${connType} ifname ${iface} con-name ${iface} ` +
+                  `ipv4.method auto ` +
+                  `ipv4.route-metric ${metric} 2>/dev/null && nmcli connection up ${iface} 2>/dev/null`
                 );
               }
             }
@@ -279,13 +264,13 @@ class GatewayService {
             // Start 60s Anti-Brick rollback timer
             if (this.rollbackTimer) clearTimeout(this.rollbackTimer);
             this.rollbackTimer = setTimeout(() => {
-              console.warn(`[Anti-Brick] Temporizador de 60s expirado sem confirmação! Revertendo interface ${iface}...`);
+              console.warn(`[Anti-Brick] Temporizador expirado! Revertendo ${iface}...`);
               this.rollbackNetworkConfig();
             }, 60000);
 
             resolve({
               success: true,
-              message: 'Configuração aplicada com sucesso. Temporizador de segurança (60s) ativado.',
+              message: `Configuração aplicada! Métrica da rota: ${metric}. Temporizador Anti-Brick (60s) ativado.`,
               sysOutput: sysRes.output,
               requiresConfirmation: true
             });
