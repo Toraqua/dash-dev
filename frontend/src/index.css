@@ -804,13 +804,3 @@ body.react-draggable-transparent-selection {
   user-select: auto !important;
   -webkit-user-select: auto !important;
 }
-
-/* Inversão automática para a imagem de logo padrão no tema escuro/claro */
-html[data-theme="dark"] .kronox-default-logo,
-:root:not([data-theme="light"]) .kronox-default-logo {
-  filter: invert(1) hue-rotate(180deg);
-}
-
-html[data-theme="light"] .kronox-default-logo {
-  filter: none;
-}
