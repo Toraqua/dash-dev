@@ -155,11 +155,11 @@ body {
 }
 
 .sidebar {
-  width: 260px;
+  width: 280px;
   background: var(--bg-panel);
   backdrop-filter: var(--glass-blur);
   border-right: 1px solid var(--border-color);
-  padding: 2rem 1.5rem;
+  padding: 2rem 1.25rem;
   display: flex;
   flex-direction: column;
   transition: all 0.3s ease;
