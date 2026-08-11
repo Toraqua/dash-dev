@@ -415,19 +415,80 @@ app.get('/api/alarm_history', (req, res) => {
 app.get('/api/config/export', async (req, res) => {
   try {
     const devices = await new Promise((resolve, reject) => db.all('SELECT * FROM devices', [], (e, r) => e ? reject(e) : resolve(r)));
-    const variables = await new Promise((resolve, reject) => db.all('SELECT * FROM variables', [], (e, r) => e ? reject(e) : resolve(r)));
+    const rawVariables = await new Promise((resolve, reject) => db.all('SELECT * FROM variables', [], (e, r) => e ? reject(e) : resolve(r)));
     const alarm_configs = await new Promise((resolve, reject) => db.all('SELECT * FROM alarm_configs', [], (e, r) => e ? reject(e) : resolve(r)));
     const cameras = await new Promise((resolve, reject) => db.all('SELECT * FROM cameras', [], (e, r) => e ? reject(e) : resolve(r)));
     const system_settings = await new Promise((resolve, reject) => db.all('SELECT * FROM system_settings', [], (e, r) => e ? reject(e) : resolve(r)));
+    const gateway_network = await new Promise((resolve, reject) => db.all('SELECT * FROM gateway_network_config', [], (e, r) => e ? reject(e) : resolve(r)));
+    const gateway_routes = await new Promise((resolve, reject) => db.all('SELECT * FROM gateway_routes', [], (e, r) => e ? reject(e) : resolve(r)));
+    const gateway_mqtt = await new Promise((resolve, reject) => db.all('SELECT * FROM gateway_mqtt_config', [], (e, r) => e ? reject(e) : resolve(r)));
+    const users = await new Promise((resolve, reject) => db.all('SELECT id, username, role FROM users', [], (e, r) => e ? reject(e) : resolve(r)));
+
+    const variables = rawVariables.map(v => {
+      let opts = {};
+      try {
+        opts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
+      } catch (e) {}
+
+      let layout = {};
+      try {
+        layout = typeof v.grid_layout === 'string' ? JSON.parse(v.grid_layout || '{}') : (v.grid_layout || {});
+      } catch (e) {}
+
+      return {
+        id: v.id,
+        device_id: v.device_id,
+        name: v.name,
+        display_name: v.display_name,
+        type: v.type,
+        unit: v.unit || '',
+        modbus_address: v.modbus_address,
+        modbus_type: v.modbus_type,
+        decimals: v.decimals || 0,
+        widget_type: v.widget_type,
+        color: v.color || '#3b82f6',
+        category: v.category || 'supervision',
+        grid_layout: layout,
+        options: {
+          data_format: opts.data_format || '16_int',
+          endianness: opts.endianness || 'ABCD',
+          scale: opts.scale !== undefined ? opts.scale : 1,
+          offset: opts.offset !== undefined ? opts.offset : 0,
+          bit_index: opts.bit_index !== undefined ? opts.bit_index : -1,
+          min_val: opts.min_val !== undefined ? opts.min_val : 0,
+          max_val: opts.max_val !== undefined ? opts.max_val : 100,
+          label_off: opts.label_off || 'DESLIGADO',
+          label_on: opts.label_on || 'LIGADO',
+          color_off: opts.color_off || '#ef4444',
+          color_on: opts.color_on || '#22c55e',
+          ...opts
+        }
+      };
+    });
+
+    const formattedCameras = cameras.map(c => {
+      let layout = {};
+      try {
+        layout = typeof c.grid_layout === 'string' ? JSON.parse(c.grid_layout || '{}') : (c.grid_layout || {});
+      } catch (e) {}
+      return {
+        ...c,
+        grid_layout: layout
+      };
+    });
 
     res.json({
-      version: '1.0',
+      version: '1.1',
       exported_at: new Date().toISOString(),
       devices,
       variables,
       alarm_configs,
-      cameras,
-      system_settings
+      cameras: formattedCameras,
+      system_settings,
+      gateway_network,
+      gateway_routes,
+      gateway_mqtt,
+      users
     });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -436,7 +497,7 @@ app.get('/api/config/export', async (req, res) => {
 
 // --- API: Importar Configuração do Sistema (.JSON) ---
 app.post('/api/config/import', async (req, res) => {
-  const { devices, variables, alarm_configs, cameras, system_settings } = req.body;
+  const { devices, variables, alarm_configs, cameras, system_settings, gateway_network, gateway_routes, gateway_mqtt } = req.body;
   if (!variables || !Array.isArray(variables)) {
     return res.status(400).json({ error: 'Formato de arquivo de configuração inválido.' });
   }
@@ -457,7 +518,30 @@ app.post('/api/config/import', async (req, res) => {
       db.run('DELETE FROM variables');
       if (variables.length > 0) {
         const stmt = db.prepare('INSERT INTO variables (id, device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, grid_layout, color, category, options) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        variables.forEach(v => stmt.run(v.id, v.device_id, v.name, v.display_name, v.type, v.unit || '', v.modbus_address, v.modbus_type, v.decimals || 0, v.widget_type || 'value', typeof v.grid_layout === 'object' ? JSON.stringify(v.grid_layout) : (v.grid_layout || '{}'), v.color || '#3b82f6', v.category || 'supervision', typeof v.options === 'object' ? JSON.stringify(v.options) : (v.options || '{}')));
+        variables.forEach(v => {
+          let opts = {};
+          if (typeof v.options === 'object' && v.options !== null) {
+            opts = { ...v.options };
+          } else if (typeof v.options === 'string') {
+            try { opts = JSON.parse(v.options || '{}'); } catch (e) {}
+          }
+          const finalOpts = {
+            data_format: opts.data_format || '16_int',
+            endianness: opts.endianness || 'ABCD',
+            scale: opts.scale !== undefined ? opts.scale : 1,
+            offset: opts.offset !== undefined ? opts.offset : 0,
+            bit_index: opts.bit_index !== undefined ? opts.bit_index : -1,
+            min_val: opts.min_val !== undefined ? opts.min_val : 0,
+            max_val: opts.max_val !== undefined ? opts.max_val : 100,
+            label_off: opts.label_off || 'DESLIGADO',
+            label_on: opts.label_on || 'LIGADO',
+            color_off: opts.color_off || '#ef4444',
+            color_on: opts.color_on || '#22c55e',
+            ...opts
+          };
+          const layout = typeof v.grid_layout === 'object' ? JSON.stringify(v.grid_layout) : (v.grid_layout || '{}');
+          stmt.run(v.id, v.device_id, v.name, v.display_name, v.type, v.unit || '', v.modbus_address, v.modbus_type, v.decimals || 0, v.widget_type || 'value', layout, v.color || '#3b82f6', v.category || 'supervision', JSON.stringify(finalOpts));
+        });
         stmt.finalize();
       }
     }
@@ -474,8 +558,8 @@ app.post('/api/config/import', async (req, res) => {
     if (Array.isArray(cameras)) {
       db.run('DELETE FROM cameras');
       if (cameras.length > 0) {
-        const stmt = db.prepare('INSERT INTO cameras (id, name, url) VALUES (?, ?, ?)');
-        cameras.forEach(c => stmt.run(c.id, c.name, c.url));
+        const stmt = db.prepare('INSERT INTO cameras (id, name, url, grid_layout) VALUES (?, ?, ?, ?)');
+        cameras.forEach(c => stmt.run(c.id, c.name, c.url, typeof c.grid_layout === 'object' ? JSON.stringify(c.grid_layout) : (c.grid_layout || '{}')));
         stmt.finalize();
       }
     }
@@ -489,6 +573,29 @@ app.post('/api/config/import', async (req, res) => {
       }
     }
 
+    if (Array.isArray(gateway_network) && gateway_network.length > 0) {
+      db.run('DELETE FROM gateway_network_config');
+      const stmt = db.prepare('INSERT INTO gateway_network_config (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, route_metric, wifi_ssid, wifi_security, wifi_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      gateway_network.forEach(n => stmt.run(n.interface, n.enabled !== undefined ? n.enabled : 1, n.mode || 'dhcp', n.ip_address || '', n.netmask_cidr || '', n.gateway || '', n.dns || '', n.is_default_route || 0, n.route_metric || 100, n.wifi_ssid || '', n.wifi_security || 'wpa2', n.wifi_password || ''));
+      stmt.finalize();
+    }
+
+    if (Array.isArray(gateway_routes)) {
+      db.run('DELETE FROM gateway_routes');
+      if (gateway_routes.length > 0) {
+        const stmt = db.prepare('INSERT INTO gateway_routes (id, destination, netmask_cidr, gateway, interface, metric, persistent) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        gateway_routes.forEach(r => stmt.run(r.id, r.destination || r.target_ip_cidr || '', r.netmask_cidr || '', r.gateway || r.gateway_ip || '', r.interface || '', r.metric || 100, r.persistent !== undefined ? r.persistent : 1));
+        stmt.finalize();
+      }
+    }
+
+    if (Array.isArray(gateway_mqtt) && gateway_mqtt.length > 0) {
+      db.run('DELETE FROM gateway_mqtt_config');
+      const stmt = db.prepare('INSERT INTO gateway_mqtt_config (id, host, port, client_id, username, password, keep_alive, use_ssl, clean_session, last_will_topic, last_will_qos, last_will_retain, last_will_message, publish_topic, publish_interval_seconds, json_template) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      gateway_mqtt.forEach(m => stmt.run(m.id || 1, m.host || '', m.port || 1883, m.client_id || 'kronox-gw-01', m.username || '', m.password || '', m.keep_alive || 60, m.use_ssl || 0, m.clean_session || 1, m.last_will_topic || '', m.last_will_qos || 0, m.last_will_retain || 0, m.last_will_message || '', m.publish_topic || 'kronox/telemetry/state', m.publish_interval_seconds || 5, m.json_template || ''));
+      stmt.finalize();
+    }
+
     db.run('COMMIT', (err) => {
       if (err) return res.status(500).json({ error: err.message });
       if (plc && plc.reloadDevices) plc.reloadDevices();
@@ -499,12 +606,12 @@ app.post('/api/config/import', async (req, res) => {
 
       db.get(`SELECT value FROM system_settings WHERE key = 'general_config'`, [], (e, r) => {
         if (r) {
-          try { io.emit('general_config_updated', JSON.parse(r.value)); } catch(err) {}
+          try { io.emit('general_config_updated', JSON.parse(r.value)); } catch (err) {}
         }
       });
       db.get(`SELECT value FROM system_settings WHERE key = 'lighting_config'`, [], (e, r) => {
         if (r) {
-          try { io.emit('lighting_config_updated', JSON.parse(r.value)); } catch(err) {}
+          try { io.emit('lighting_config_updated', JSON.parse(r.value)); } catch (err) {}
         }
       });
 
