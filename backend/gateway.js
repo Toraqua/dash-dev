@@ -289,6 +289,12 @@ class GatewayService {
               }
             }
 
+            // 4. Ensure explicit subnet route exists so noprefixroute never blocks communication
+            if (mode === 'static' && ip_address) {
+              const netAddr = ip_address.split('.').slice(0, 3).join('.') + '.0';
+              await this.execPromise(`ip route add ${netAddr}/${netmask_cidr || 24} dev ${iface} 2>/dev/null || true`);
+            }
+
             // Start 60s Anti-Brick rollback timer
             if (this.rollbackTimer) clearTimeout(this.rollbackTimer);
             this.rollbackTimer = setTimeout(() => {
@@ -298,7 +304,7 @@ class GatewayService {
 
             resolve({
               success: true,
-              message: `Configuração aplicada! Rota padrão para internet: ${is_default_route ? 'Sim' : 'Não (never-default)'}. Temporizador Anti-Brick (60s) ativado.`,
+              message: `Configuração aplicada! Rota padrão para internet: ${is_default_route ? 'Sim' : 'Não'}. Temporizador Anti-Brick (60s) ativado.`,
               sysOutput: sysRes.output,
               requiresConfirmation: true
             });
