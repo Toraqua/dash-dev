@@ -51,7 +51,8 @@ function App() {
     } catch (e) {}
     return {
       system_name: 'KRONOX OS',
-      system_logo: '/logo.png',
+      system_logo: '/kronox_logo.png',
+      sidebar_display: 'image',
       dashboard_title: 'Visão Geral da Estação',
       timezone: 'America/Sao_Paulo',
       history_interval_seconds: 15
@@ -274,12 +275,23 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            {generalConfig.system_logo ? (
-              <img src={generalConfig.system_logo} alt="Logo" style={{ width: '28px', height: '28px', objectFit: 'contain' }} />
+            {generalConfig.sidebar_display === 'text' ? (
+              <>
+                <Zap size={28} color="var(--color-primary)" />
+                <span>{generalConfig.system_name || 'KRONOX OS'}</span>
+              </>
+            ) : generalConfig.system_logo ? (
+              <img
+                src={generalConfig.system_logo}
+                alt={generalConfig.system_name || 'Logo'}
+                style={{ height: '36px', maxWidth: '160px', objectFit: 'contain', filter: 'var(--logo-filter, none)' }}
+              />
             ) : (
-              <Zap size={28} color="var(--color-primary)" />
+              <>
+                <Zap size={28} color="var(--color-primary)" />
+                <span>{generalConfig.system_name || 'KRONOX OS'}</span>
+              </>
             )}
-            <span>{generalConfig.system_name || ''}</span>
           </div>
           <button 
             onClick={toggleTheme}

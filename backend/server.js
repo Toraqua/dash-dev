@@ -267,11 +267,11 @@ app.post('/api/settings/lighting', (req, res) => {
 app.get('/api/settings/general', (req, res) => {
   db.get(`SELECT value FROM system_settings WHERE key = 'general_config'`, [], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.json({ system_name: 'KRONOX OS', system_logo: '/logo.png', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15 });
+    if (!row) return res.json({ system_name: 'KRONOX OS', system_logo: '/kronox_logo.png', sidebar_display: 'image', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15 });
     try {
       res.json(JSON.parse(row.value));
     } catch(e) {
-      res.json({ system_name: 'KRONOX OS', system_logo: '/logo.png', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15 });
+      res.json({ system_name: 'KRONOX OS', system_logo: '/kronox_logo.png', sidebar_display: 'image', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15 });
     }
   });
 });

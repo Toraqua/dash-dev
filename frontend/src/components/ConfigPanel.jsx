@@ -62,8 +62,9 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
   });
 
   const [genConfig, setGenConfig] = useState({
-    system_name: (generalConfig && generalConfig.system_name) || 'KRONOX',
-    system_logo: (generalConfig && generalConfig.system_logo) || '/logo.png',
+    system_name: (generalConfig && generalConfig.system_name) || 'KRONOX OS',
+    system_logo: (generalConfig && generalConfig.system_logo) || '/kronox_logo.png',
+    sidebar_display: (generalConfig && generalConfig.sidebar_display) || 'image',
     dashboard_title: (generalConfig && generalConfig.dashboard_title) || 'Visão Geral da Estação',
     timezone: (generalConfig && generalConfig.timezone) || 'America/Sao_Paulo',
     history_interval_seconds: (generalConfig && generalConfig.history_interval_seconds) !== undefined ? generalConfig.history_interval_seconds : 15
@@ -72,8 +73,9 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
   useEffect(() => {
     if (generalConfig) {
       setGenConfig({
-        system_name: generalConfig.system_name || 'KRONOX',
-        system_logo: generalConfig.system_logo !== undefined ? generalConfig.system_logo : '/logo.png',
+        system_name: generalConfig.system_name || 'KRONOX OS',
+        system_logo: generalConfig.system_logo !== undefined ? generalConfig.system_logo : '/kronox_logo.png',
+        sidebar_display: generalConfig.sidebar_display || 'image',
         dashboard_title: generalConfig.dashboard_title || 'Visão Geral da Estação',
         timezone: generalConfig.timezone || 'America/Sao_Paulo',
         history_interval_seconds: generalConfig.history_interval_seconds !== undefined ? generalConfig.history_interval_seconds : 15
@@ -1090,28 +1092,60 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Logomarca do Sistema (Sidebar)</label>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                {genConfig?.system_logo ? (
-                  <div style={{ padding: '0.5rem 0.75rem', background: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <img src={genConfig.system_logo} alt="Preview Logo" style={{ width: '36px', height: '36px', objectFit: 'contain' }} />
-                    <button className="btn" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--color-danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem', cursor: 'pointer' }} onClick={() => setGenConfig({ ...genConfig, system_logo: '' })}>
-                      <Trash2 size={14} /> Remover
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-                    <Zap size={24} color="var(--color-primary)" />
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Ícone Padrão (Raio)</span>
-                  </div>
-                )}
-
-                <label className="btn" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.3)', cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <Upload size={16} /> Selecionar Imagem do Dispositivo
-                  <input type="file" accept="image/*" onChange={handleLogoUpload} style={{ display: 'none' }} />
-                </label>
+              <label className="form-label">Exibição na Sidebar</label>
+              <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setGenConfig({ ...genConfig, sidebar_display: 'image' })}
+                  style={{
+                    flex: 1, padding: '0.6rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', transition: 'all 0.2s',
+                    background: genConfig.sidebar_display !== 'text' ? 'rgba(59,130,246,0.2)' : 'var(--bg-panel)',
+                    border: genConfig.sidebar_display !== 'text' ? '2px solid #3b82f6' : '2px solid var(--border-color)',
+                    color: genConfig.sidebar_display !== 'text' ? '#3b82f6' : 'var(--text-secondary)'
+                  }}
+                >
+                  🖼 Logomarca (Imagem)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGenConfig({ ...genConfig, sidebar_display: 'text' })}
+                  style={{
+                    flex: 1, padding: '0.6rem', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', transition: 'all 0.2s',
+                    background: genConfig.sidebar_display === 'text' ? 'rgba(59,130,246,0.2)' : 'var(--bg-panel)',
+                    border: genConfig.sidebar_display === 'text' ? '2px solid #3b82f6' : '2px solid var(--border-color)',
+                    color: genConfig.sidebar_display === 'text' ? '#3b82f6' : 'var(--text-secondary)'
+                  }}
+                >
+                  🔤 Nome do Sistema (Texto)
+                </button>
               </div>
+
+              {genConfig.sidebar_display !== 'text' && (
+                <div>
+                  <label className="form-label" style={{ fontSize: '0.85rem' }}>Logomarca do Sistema (Sidebar)</label>
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {genConfig?.system_logo ? (
+                      <div style={{ padding: '0.5rem 0.75rem', background: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <img src={genConfig.system_logo} alt="Preview Logo" style={{ height: '36px', maxWidth: '160px', objectFit: 'contain' }} />
+                        <button className="btn" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--color-danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem', cursor: 'pointer' }} onClick={() => setGenConfig({ ...genConfig, system_logo: '' })}>
+                          <Trash2 size={14} /> Remover
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <Zap size={24} color="var(--color-primary)" />
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Nenhuma imagem selecionada</span>
+                      </div>
+                    )}
+                    <label className="btn" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.3)', cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Upload size={16} /> Selecionar Imagem do Dispositivo
+                      <input type="file" accept="image/*" onChange={handleLogoUpload} style={{ display: 'none' }} />
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
+
 
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Título da Tela Inicial (Dashboard)</label>
