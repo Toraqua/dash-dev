@@ -284,7 +284,8 @@ function App() {
               <img
                 src={generalConfig.system_logo}
                 alt={generalConfig.system_name || 'Logo'}
-                style={{ height: '36px', maxWidth: '160px', objectFit: 'contain', filter: 'var(--logo-filter, none)' }}
+                className={generalConfig.system_logo?.includes('kronox_logo') ? 'kronox-default-logo' : ''}
+                style={{ height: '36px', maxWidth: '160px', objectFit: 'contain' }}
               />
             ) : (
               <>

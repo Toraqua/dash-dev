@@ -1126,7 +1126,12 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
                     {genConfig?.system_logo ? (
                       <div style={{ padding: '0.5rem 0.75rem', background: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <img src={genConfig.system_logo} alt="Preview Logo" style={{ height: '36px', maxWidth: '160px', objectFit: 'contain' }} />
+                        <img
+                          src={genConfig.system_logo}
+                          alt="Preview Logo"
+                          className={genConfig.system_logo?.includes('kronox_logo') ? 'kronox-default-logo' : ''}
+                          style={{ height: '36px', maxWidth: '160px', objectFit: 'contain' }}
+                        />
                         <button className="btn" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--color-danger)', padding: '0.35rem 0.6rem', fontSize: '0.8rem', cursor: 'pointer' }} onClick={() => setGenConfig({ ...genConfig, system_logo: '' })}>
                           <Trash2 size={14} /> Remover
                         </button>
