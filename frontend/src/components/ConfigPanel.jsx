@@ -433,6 +433,85 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     }
   };
 
+  const handleImportTagsCSV = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split('\n');
+      const toImport = [];
+      
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line || line.startsWith('#')) continue;
+        
+        const parts = line.split(';');
+        if (parts.length >= 6) {
+          const rawVarName = parts[1].replace(/"/g, '').trim(); 
+          const varNameParts = rawVarName.split('.');
+          const displayName = varNameParts[varNameParts.length - 1]; 
+          
+          const dataTypeStr = parts[2].replace(/"/g, '').trim(); 
+          const address = Math.max(0, parseInt(parts[3].replace(/"/g, '').trim()) - 1); 
+          const iecType = parts[5].replace(/"/g, '').trim(); 
+          
+          let modbus_type = 'holding';
+          if (dataTypeStr.toLowerCase() === 'coil') modbus_type = 'coil';
+          else if (dataTypeStr.toLowerCase() === 'inputstatus') modbus_type = 'discrete';
+          else if (dataTypeStr.toLowerCase() === 'holdingregister') modbus_type = 'holding';
+          else if (dataTypeStr.toLowerCase() === 'inputregister') modbus_type = 'input';
+          
+          let widget_type = 'value';
+          let data_format = '16_int';
+          if (iecType === 'BOOL') {
+            widget_type = 'bitmap';
+          } else if (iecType === 'REAL') {
+            data_format = '32_float';
+          }
+          
+          toImport.push({
+            device_id: devices.length > 0 ? devices[0].id : null,
+            name: rawVarName.replace(/\./g, '_'), 
+            display_name: displayName,
+            type: iecType === 'BOOL' ? 'boolean' : 'analog',
+            unit: '',
+            modbus_address: address,
+            modbus_type,
+            decimals: iecType === 'REAL' ? 2 : 0,
+            widget_type,
+            color: '#3b82f6',
+            category: 'supervision',
+            options: { ...defaultVarOptions, data_format }
+          });
+        }
+      }
+      
+      if (toImport.length === 0) {
+        showNotification('Nenhuma tag válida encontrada no CSV', 'error');
+        return;
+      }
+      
+      let imported = 0;
+      for (const item of toImport) {
+        try {
+          const res = await fetch(getBaseUrl() + '/api/variables', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+          });
+          if (res.ok) imported++;
+        } catch(err) {}
+      }
+      
+      showNotification(`${imported} tags importadas com sucesso!`, 'success');
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      showNotification('Erro ao ler arquivo CSV', 'error');
+    }
+    e.target.value = '';
+  };
+
   const handleAddVariable = async () => {
     try {
       const payload = { ...newVar, device_id: newVar.device_id || (devices.length > 0 ? devices[0].id : null) };
@@ -494,7 +573,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
         ...parsedOpts
       }
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.getElementById('var-edit-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleDeleteVariable = async (id) => {
@@ -717,10 +796,16 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
       {activeTab === 'variables' && (
         <div>
-          <h3 style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-            {editingVarId ? 'Editar Variável' : 'Adicionar Nova Variável ao Dashboard'}
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem', background: 'var(--bg-subcard)', padding: '1rem', borderRadius: '8px', border: editingVarId ? '1px solid var(--color-primary)' : '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ color: 'var(--text-secondary)', margin: 0 }}>
+              {editingVarId ? 'Editar Variável' : 'Adicionar Nova Variável ao Dashboard'}
+            </h3>
+            <label className="btn" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', fontSize: '0.825rem', padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem', border: '1px solid rgba(16, 185, 129, 0.3)', cursor: 'pointer', margin: 0 }}>
+              <Upload size={15} /> Importar Tags CLP (.CSV)
+              <input type="file" accept=".csv" onChange={handleImportTagsCSV} style={{ display: 'none' }} />
+            </label>
+          </div>
+          <div id="var-edit-form" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '2rem', background: 'var(--bg-subcard)', padding: '1rem', borderRadius: '8px', border: editingVarId ? '1px solid var(--color-primary)' : '1px solid var(--border-color)' }}>
 
             <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
