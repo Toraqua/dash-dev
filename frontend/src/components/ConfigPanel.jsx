@@ -7,26 +7,28 @@ import {
 } from 'lucide-react';
 
 const BLOCK_TYPES = [
-  { id: 'timeseries', label: 'Inserir gráfico de série temporal', icon: TrendingUp, info: 'Gráfico de linha para acompanhamento contínuo de tendência ao longo do tempo.' },
-  { id: 'donut', label: 'Inserir gráfico de donut', icon: PieChart, info: 'Gráfico circular para visualização proporcional de porcentagem ou estados.' },
-  { id: 'radial_gauge', label: 'Inserir medidor radial', icon: Gauge, info: 'Velocímetro / Medidor de arco circular com limites e ponteiro.' },
-  { id: 'table', label: 'Inserir tabela', icon: Table, info: 'Tabela de histórico com registros recentes e carimbos de data/hora.' },
-  { id: 'variable_list', label: 'Inserir lista de variáveis', icon: List, info: 'Lista sintética compacta de múltiplas variáveis de processo.' },
-  { id: 'external_link', label: 'Inserir link externo', icon: Link, info: 'Atalho ou frame para páginas externas ou relatórios secundários.' },
-  { id: 'geolocation', label: 'Inserir geolocalização', icon: MapPin, info: 'Mapa geográfico com indicação de localização da estação.' },
-  { id: 'image_overlay', label: 'Inserir image overlay', icon: Image, info: 'Diagrama sinóptico / Planta baixa com sobreposição de dados em tempo real.' },
-  { id: 'comparative_analysis', label: 'Inserir análise comparativa', icon: BarChart2, info: 'Gráfico comparativo entre valores medidos e setpoints esperados.' },
-  { id: 'scatter', label: 'Inserir gráfico de dispersão', icon: ScatterChart, info: 'Gráfico XY de dispersão para correlação entre duas variáveis.' },
-  { id: 'value_gauge', label: 'Inserir gauge de valor', icon: Layout, info: 'Cartão de exibição numérico destacado com unidade de medida.' },
-  { id: 'heatmap', label: 'Inserir heatmap', icon: Grid, info: 'Matriz de calor por hora / dia indicando intensidade de operação.' },
-  { id: 'bitmap', label: 'Inserir mapa de bits', icon: Binary, info: 'Matriz de bits para status lógico (Ligado/Desligado, Falha/Normal).' },
-  { id: 'timeline', label: 'Inserir timeline', icon: Clock, info: 'Linha do tempo cronológica com eventos de comutação e alarmes.' },
-  { id: 'header', label: 'Inserir cabeçalho', icon: Type, info: 'Bloco divisor de título de seção para organização do painel.' },
-  { id: 'write_button', label: 'Inserir botão de escrita', icon: Edit3, info: 'Campo de entrada de setpoint com botão de envio para o CLP.' },
-  { id: 'level_indicator', label: 'Inserir indicador de nível', icon: Activity, info: 'Coluna de nível vertical para reservatórios, poços e tanques.' },
-  { id: 'horizontal_bar', label: 'Inserir gráfico de barra lateral', icon: BarChart, info: 'Barra horizontal de progresso / percentual de fundo de escala.' },
-  { id: 'multibit_list', label: 'Inserir lista multibit', icon: List, info: 'Lista de status e alarmes baseada nos bits individuais de uma palavra Modbus (Word).' },
+  { id: 'value',             label: 'Valor Numérico',              icon: Layout,      info: 'Exibe o valor atual da variável em destaque, com unidade de medida. Ideal para leituras simples como corrente, tensão e temperatura.' },
+  { id: 'value_gauge',       label: 'Valor Numérico (Grande)',     icon: Layout,      info: 'Cartão de valor numérico em tamanho ampliado para facilitar visualização a distância.' },
+  { id: 'timeseries',        label: 'Gráfico de Tendência',        icon: TrendingUp,  info: 'Gráfico de linha contínuo para acompanhamento de tendência ao longo do tempo. Ideal para análise de variáveis analógicas.' },
+  { id: 'radial_gauge',      label: 'Medidor Radial (Arco)',       icon: Gauge,       info: 'Velocímetro circular com arco de progresso. Exibe o valor atual em relação a uma faixa mínima e máxima configurável.' },
+  { id: 'level_indicator',   label: 'Indicador de Nível (Tanque)', icon: Activity,    info: 'Coluna vertical animada que representa o nível de reservatórios, caixas d\'água, poços ou tanques.' },
+  { id: 'horizontal_bar',    label: 'Barra de Progresso',          icon: BarChart,    info: 'Barra horizontal de progresso proporcional ao valor atual em relação ao fundo de escala.' },
+  { id: 'bitmap',            label: 'Status Ligado / Desligado',   icon: Binary,      info: 'Indicador de estado lógico com cores configuráveis. Para sinais digitais, bobinas (Coil) e bits individuais de palavras.' },
+  { id: 'multibit_list',     label: 'Lista de Status (Multibit)',  icon: List,        info: 'Lista de múltiplos status e alarmes mapeados em bits individuais de uma palavra Modbus (Word 16 bits).' },
+  { id: 'write_button',      label: 'Entrada de Setpoint (Escrita)', icon: Edit3,     info: 'Campo de entrada numérico com botão de envio para escrever setpoints diretamente no CLP via Modbus.' },
+  { id: 'table',             label: 'Tabela de Histórico',         icon: Table,       info: 'Tabela paginada com os registros históricos mais recentes da variável, com opção de exportar para CSV.' },
+  { id: 'donut',             label: 'Gráfico de Rosca (Donut)',    icon: PieChart,    info: 'Gráfico circular proporcional para visualização de percentual ou fração do valor em relação ao máximo.' },
+  { id: 'scatter',           label: 'Gráfico de Dispersão (XY)',   icon: ScatterChart,info: 'Gráfico XY de dispersão para análise de correlação entre duas variáveis de processo.' },
+  { id: 'variable_list',     label: 'Lista de Variáveis',          icon: List,        info: 'Lista compacta com múltiplas variáveis de processo exibidas simultaneamente em um único bloco.' },
+  { id: 'external_link',     label: 'Link Externo / Atalho',       icon: Link,        info: 'Atalho ou incorporação de link para páginas externas, relatórios ou sistemas secundários.' },
+  { id: 'geolocation',       label: 'Geolocalização (Mapa)',       icon: MapPin,      info: 'Mapa geográfico com indicação da localização da estação de bombeamento ou unidade monitorada.' },
+  { id: 'image_overlay',     label: 'Sinóptico / Imagem Overlay',  icon: Image,       info: 'Diagrama sinóptico ou planta baixa com sobreposição de dados em tempo real sobre a imagem de fundo.' },
+  { id: 'comparative_analysis', label: 'Análise Comparativa',     icon: BarChart2,   info: 'Gráfico comparativo entre valores medidos e setpoints ou referências esperadas.' },
+  { id: 'heatmap',           label: 'Mapa de Calor (Heatmap)',     icon: Grid,        info: 'Matriz de intensidade hora × dia para identificar padrões de operação ao longo da semana.' },
+  { id: 'timeline',          label: 'Linha do Tempo (Timeline)',   icon: Clock,       info: 'Linha do tempo cronológica com eventos de comutação, alarmes e mudanças de estado.' },
+  { id: 'header',            label: 'Cabeçalho de Seção',          icon: Type,        info: 'Bloco de título divisor para organizar o painel em seções com nome e descrição.' },
 ];
+
 
 function ConfigPanel({ socket, variables = [], cameras = [], devices = [], generalConfig = {}, onRefresh }) {
   const [activeTab, setActiveTab] = useState('variables');
@@ -935,7 +937,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                   setNewVar({ ...newVar, widget_type: wt, type: (wt === 'switch' || wt === 'bitmap' ? 'boolean' : 'analog') });
                 }}>
                   {BLOCK_TYPES.map(bt => (
-                    <option key={bt.id} value={bt.id}>{bt.label.replace('Inserir ', '')}</option>
+                    <option key={bt.id} value={bt.id}>{bt.label}</option>
                   ))}
                 </select>
               </div>

@@ -1036,7 +1036,6 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                         {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
                         <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Status: Operativo</div>
                     </div>
                   )}
 
