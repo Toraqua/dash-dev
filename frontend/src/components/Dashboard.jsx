@@ -435,6 +435,32 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
     }
   };
 
+  const modbusWrite = async (variable, value) => {
+    await fetch(getBaseUrl() + '/api/modbus/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: variable.device_id,
+        modbus_type: variable.modbus_type,
+        address: variable.modbus_address,
+        value,
+        decimals: variable.decimals
+      })
+    });
+  };
+
+  const handleBitButton = async (variable, currentVal, mode) => {
+    try {
+      const cur = Boolean(currentVal);
+      if (mode === 'toggle')        await modbusWrite(variable, !cur);
+      else if (mode === 'set')      await modbusWrite(variable, true);
+      else if (mode === 'reset')    await modbusWrite(variable, false);
+      // momentary modes handled via onMouseDown/onMouseUp
+    } catch (e) {
+      console.error('Erro botão bit', e);
+    }
+  };
+
   const handleWriteModbus = async (variable) => {
     const value = inputValues[variable.id];
     if (value === undefined || value === '') return;
@@ -665,6 +691,74 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                           )}
                         </div>
                       )}
+
+                      {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
+                      {v.widget_type === 'bit_button' && (() => {
+                        const mode = opts.button_mode || 'toggle';
+                        const labelOff = opts.label_off || 'DESLIGADO';
+                        const labelOn = opts.label_on || 'LIGADO';
+                        const colorOff = opts.color_off || '#ef4444';
+                        const colorOn = opts.color_on || v.color || '#22c55e';
+                        
+                        const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
+                        
+                        const handleDown = () => {
+                          if (mode === 'momentary_on') modbusWrite(v, true);
+                          if (mode === 'momentary_off') modbusWrite(v, false);
+                        };
+                        const handleUp = () => {
+                          if (mode === 'momentary_on') modbusWrite(v, false);
+                          if (mode === 'momentary_off') modbusWrite(v, true);
+                        };
+                        
+                        const activeColor = isBitActive ? colorOn : colorOff;
+                        const activeText = isBitActive ? labelOn : labelOff;
+
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
+                            <button
+                              type="button"
+                              onMouseDown={isPressMode ? handleDown : undefined}
+                              onMouseUp={isPressMode ? handleUp : undefined}
+                              onMouseLeave={isPressMode ? handleUp : undefined}
+                              onTouchStart={isPressMode ? handleDown : undefined}
+                              onTouchEnd={isPressMode ? handleUp : undefined}
+                              onClick={!isPressMode ? () => handleBitButton(v, isBitActive, mode) : undefined}
+                              style={{
+                                width: '85%',
+                                padding: '0.75rem 1.2rem',
+                                borderRadius: '12px',
+                                border: `2px solid ${activeColor}`,
+                                background: isBitActive ? `${colorOn}25` : `${colorOff}15`,
+                                color: activeColor,
+                                fontWeight: 'bold',
+                                fontSize: '1rem',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '0.6rem',
+                                boxShadow: isBitActive ? `0 0 15px ${colorOn}40` : 'none',
+                                transition: 'all 0.15s ease',
+                                userSelect: 'none'
+                              }}
+                            >
+                              <Power size={20} color={activeColor} />
+                              {activeText}
+                            </button>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
+                              {
+                                mode === 'toggle' ? 'Modo: Alternar (Toggle)' :
+                                mode === 'set' ? 'Modo: Set Bit (Ligar)' :
+                                mode === 'reset' ? 'Modo: Reset Bit (Desligar)' :
+                                mode === 'momentary_on' ? 'Modo: Pulsador (Norm. Aberto)' :
+                                mode === 'momentary_off' ? 'Modo: Pulsador (Norm. Fechado)' : `Modo: ${mode}`
+                              }
+                              {(v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* 6. LEVEL INDICATOR / TANK */}
                       {(v.widget_type === 'tank' || v.widget_type === 'level_indicator') && (() => {
@@ -1149,6 +1243,74 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                       )}
                     </div>
                   )}
+
+                  {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
+                  {v.widget_type === 'bit_button' && (() => {
+                    const mode = opts.button_mode || 'toggle';
+                    const labelOff = opts.label_off || 'DESLIGADO';
+                    const labelOn = opts.label_on || 'LIGADO';
+                    const colorOff = opts.color_off || '#ef4444';
+                    const colorOn = opts.color_on || v.color || '#22c55e';
+                    
+                    const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
+                    
+                    const handleDown = () => {
+                      if (mode === 'momentary_on') modbusWrite(v, true);
+                      if (mode === 'momentary_off') modbusWrite(v, false);
+                    };
+                    const handleUp = () => {
+                      if (mode === 'momentary_on') modbusWrite(v, false);
+                      if (mode === 'momentary_off') modbusWrite(v, true);
+                    };
+                    
+                    const activeColor = isBitActive ? colorOn : colorOff;
+                    const activeText = isBitActive ? labelOn : labelOff;
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
+                        <button
+                          type="button"
+                          onMouseDown={isPressMode ? handleDown : undefined}
+                          onMouseUp={isPressMode ? handleUp : undefined}
+                          onMouseLeave={isPressMode ? handleUp : undefined}
+                          onTouchStart={isPressMode ? handleDown : undefined}
+                          onTouchEnd={isPressMode ? handleUp : undefined}
+                          onClick={!isPressMode ? () => handleBitButton(v, isBitActive, mode) : undefined}
+                          style={{
+                            width: '85%',
+                            padding: '0.75rem 1.2rem',
+                            borderRadius: '12px',
+                            border: `2px solid ${activeColor}`,
+                            background: isBitActive ? `${colorOn}25` : `${colorOff}15`,
+                            color: activeColor,
+                            fontWeight: 'bold',
+                            fontSize: '1rem',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.6rem',
+                            boxShadow: isBitActive ? `0 0 15px ${colorOn}40` : 'none',
+                            transition: 'all 0.15s ease',
+                            userSelect: 'none'
+                          }}
+                        >
+                          <Power size={20} color={activeColor} />
+                          {activeText}
+                        </button>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
+                          {
+                            mode === 'toggle' ? 'Modo: Alternar (Toggle)' :
+                            mode === 'set' ? 'Modo: Set Bit (Ligar)' :
+                            mode === 'reset' ? 'Modo: Reset Bit (Desligar)' :
+                            mode === 'momentary_on' ? 'Modo: Pulsador (Norm. Aberto)' :
+                            mode === 'momentary_off' ? 'Modo: Pulsador (Norm. Fechado)' : `Modo: ${mode}`
+                          }
+                          {(v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* 6. LEVEL INDICATOR / TANK */}
                   {(v.widget_type === 'tank' || v.widget_type === 'level_indicator') && (() => {

@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
 import {
   Save, X, Check, Plus, Trash2, Server, Edit2, TrendingUp, PieChart,
   Gauge, Table, List, Link, MapPin, Image, BarChart2, ScatterChart,
-  Layout, Grid, Binary, Clock, Type, Edit3, Activity, BarChart, Info,
+  Layout, Grid, Binary, Clock, Type, Edit3, Activity, BarChart, Info, Power,
   ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key, Shield, Search, RefreshCw
 } from 'lucide-react';
 
@@ -14,6 +13,7 @@ const BLOCK_TYPES = [
   { id: 'level_indicator',   label: 'Indicador de Nível (Tanque)', icon: Activity,    info: 'Coluna vertical animada que representa o nível de reservatórios, caixas d\'água, poços ou tanques.' },
   { id: 'horizontal_bar',    label: 'Barra de Progresso',          icon: BarChart,    info: 'Barra horizontal de progresso proporcional ao valor atual em relação ao fundo de escala.' },
   { id: 'bitmap',            label: 'Status Ligado / Desligado',   icon: Binary,      info: 'Indicador de estado lógico com cores configuráveis. Para sinais digitais, bobinas (Coil) e bits individuais de palavras.' },
+  { id: 'bit_button',        label: 'Botão de Bit (Comando)',      icon: Power,       info: 'Botão de comando para acionamentos digitais com modos Toggle, Set, Reset e Momentâneo (Pulsador).' },
   { id: 'multibit_list',     label: 'Lista de Status (Multibit)',  icon: List,        info: 'Lista de múltiplos status e alarmes mapeados em bits individuais de uma palavra Modbus (Word 16 bits).' },
   { id: 'write_button',      label: 'Entrada de Setpoint (Escrita)', icon: Edit3,     info: 'Campo de entrada numérico com botão de envio para escrever setpoints diretamente no CLP via Modbus.' },
   { id: 'table',             label: 'Tabela de Histórico',         icon: Table,       info: 'Tabela paginada com os registros históricos mais recentes da variável, com opção de exportar para CSV.' },
@@ -48,6 +48,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     scale: 1,
     offset: 0,
     bit_index: -1,
+    button_mode: 'toggle',
     min_val: 0,
     max_val: 100,
     label_off: 'DESLIGADO',
@@ -954,8 +955,28 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                 ⚙️ Personalização Visual do Bloco ({newVar.widget_type})
               </div>
 
-              {(newVar.widget_type === 'switch' || newVar.widget_type === 'bitmap') && (
+              {(newVar.widget_type === 'switch' || newVar.widget_type === 'bitmap' || newVar.widget_type === 'bit_button') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {newVar.widget_type === 'bit_button' && (
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Modo de Funcionamento do Botão</label>
+                      <select
+                        className="form-input"
+                        value={newVar.options?.button_mode || 'toggle'}
+                        onChange={e => setNewVar({
+                          ...newVar,
+                          options: { ...(newVar.options || {}), button_mode: e.target.value }
+                        })}
+                      >
+                        <option value="toggle">Alternar Estado (Toggle - 0 ↔ 1)</option>
+                        <option value="set">Ligar Bit (Set Bit - Escreve 1)</option>
+                        <option value="reset">Desligar Bit (Reset Bit - Escreve 0)</option>
+                        <option value="momentary_on">Pulsador Normal Aberto (Momentâneo 1 enquanto pressionado)</option>
+                        <option value="momentary_off">Pulsador Normal Fechado (Momentâneo 0 enquanto pressionado)</option>
+                      </select>
+                    </div>
+                  )}
+
                   {(newVar.modbus_type === 'holding' || newVar.modbus_type === 'input') && (
                     <div className="form-group" style={{ marginBottom: 0 }}>
                       <label className="form-label">Bit Específico da Palavra (Word 16-bits)</label>
