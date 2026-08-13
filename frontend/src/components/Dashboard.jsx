@@ -184,7 +184,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
   const [currentLayout, setCurrentLayout] = useState([]);
   const [historyData, setHistoryData] = useState({});
   const [inputValues, setInputValues] = useState({});
-  const [snapCounter, setSnapCounter] = useState(0);
+  const [snapKey, setSnapKey] = useState(0);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
   const [lastReadTimes, setLastReadTimes] = useState({});
@@ -953,17 +953,22 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
             </div>
           ) : (
             <ResponsiveGridLayout
-              key={isEditing ? 'grid-edit' : 'grid-view'}
+              key={isEditing ? 'grid-edit' : `grid-view-${snapKey}`}
               className="layout"
               width={width || 1200}
               layouts={{ lg: fullLayout, md: fullLayout, sm: fullLayout, xs: fullLayout, xxs: fullLayout }}
               breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 767, xxs: 0 }}
               cols={{ lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }}
               rowHeight={100}
-              isDraggable={isEditing}
+              isDraggable={true}
               isResizable={isEditing}
-              draggableCancel={!isEditing ? ".card" : undefined}
               onLayoutChange={handleLayoutChange}
+              onDragStop={() => {
+                if (!isEditing) {
+                  // Efeito mola: remonta o grid com layout original salvo
+                  setSnapKey(k => k + 1);
+                }
+              }}
             >
           {variables.map((v, index) => {
             let l = {};
