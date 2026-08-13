@@ -1,3 +1,4 @@
+import React, { useState, useEffect } from 'react';
 import {
   Save, X, Check, Plus, Trash2, Server, Edit2, TrendingUp, PieChart,
   Gauge, Table, List, Link, MapPin, Image, BarChart2, ScatterChart,
