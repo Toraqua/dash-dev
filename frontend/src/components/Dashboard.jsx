@@ -953,9 +953,9 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
             </div>
           ) : (
             <ResponsiveGridLayout
-              key={'grid-' + snapCounter + (isEditing ? '-edit' : '-view')}
+              key={isEditing ? 'grid-edit' : 'grid-view'}
               className="layout"
-              width={width}
+              width={width || 1200}
               layouts={{ lg: fullLayout, md: fullLayout, sm: fullLayout, xs: fullLayout, xxs: fullLayout }}
               breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 767, xxs: 0 }}
               cols={{ lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }}
@@ -964,11 +964,6 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
               isResizable={isEditing}
               draggableCancel={!isEditing ? ".card" : undefined}
               onLayoutChange={handleLayoutChange}
-              onDragStop={() => {
-                if (!isEditing) {
-                  setSnapCounter(c => c + 1);
-                }
-              }}
             >
           {variables.map((v, index) => {
             let l = {};
@@ -994,7 +989,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
             }
 
             return (
-              <div key={'var-' + v.id.toString()} data-grid={gridProps} className="card" style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
+              <div key={'var-' + v.id.toString()} className="card" style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
                 <div className="card-header" style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div className="card-title" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                     <Activity size={16} color={v.color || "var(--color-primary)"} />
