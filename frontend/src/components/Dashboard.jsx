@@ -568,9 +568,10 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
 
                 const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
                 const mType = String(v.modbus_type || '').toLowerCase();
-                let isBitActive = Boolean(val);
+                let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
                 if ((mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
-                  isBitActive = (parseInt(val) & (1 << opts.bit_index)) !== 0;
+                  const numVal = parseInt(val) || 0;
+                  isBitActive = (numVal & (1 << opts.bit_index)) !== 0;
                 }
 
                 return (
@@ -1114,9 +1115,10 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
 
             const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
             const mType = String(v.modbus_type || '').toLowerCase();
-            let isBitActive = Boolean(val);
+            let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
             if ((mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
-              isBitActive = (parseInt(val) & (1 << opts.bit_index)) !== 0;
+              const numVal = parseInt(val) || 0;
+              isBitActive = (numVal & (1 << opts.bit_index)) !== 0;
             }
 
             return (
