@@ -211,7 +211,7 @@ app.post('/api/variables', (req, res) => {
     [device_id, name, display_name, type, unit || '', modbus_address, modbus_type, decimals || 0, widget_type || 'value', JSON.stringify(grid_layout || {}), color || '#3b82f6', category || 'supervision', JSON.stringify(options || {})], 
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plc.reloadDevices();
+      plc.reloadVariables();
       io.emit('variables_updated');
       res.json({ id: this.lastID, success: true });
   });
@@ -231,7 +231,7 @@ app.put('/api/variables/:id', (req, res) => {
       [device_id, name, display_name, type, unit || '', modbus_address, modbus_type, decimals || 0, widget_type || 'value', color || '#3b82f6', category || 'supervision', JSON.stringify(options || {}), grid_layout ? (typeof grid_layout === 'string' ? grid_layout : JSON.stringify(grid_layout)) : null, req.params.id], 
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        plc.reloadDevices();
+        plc.reloadVariables();
         io.emit('variables_updated');
         res.json({ success: true });
     });
@@ -241,7 +241,7 @@ app.put('/api/variables/:id', (req, res) => {
 app.delete('/api/variables/:id', (req, res) => {
   db.run('DELETE FROM variables WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    plc.reloadDevices();
+    plc.reloadVariables();
     io.emit('variables_updated');
     res.json({ success: true });
   });

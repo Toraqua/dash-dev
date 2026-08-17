@@ -567,9 +567,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                 } catch(e) {}
 
                 const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
-                
+                const mType = String(v.modbus_type || '').toLowerCase();
                 let isBitActive = Boolean(val);
-                if ((v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index !== undefined && opts.bit_index >= 0) {
+                if ((mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
                   isBitActive = (parseInt(val) & (1 << opts.bit_index)) !== 0;
                 }
 
@@ -1113,10 +1113,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
             } catch(e) {}
 
             const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
-            
-            // Evaluation of boolean / bit value based on bit_index option
+            const mType = String(v.modbus_type || '').toLowerCase();
             let isBitActive = Boolean(val);
-            if ((v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index !== undefined && opts.bit_index >= 0) {
+            if ((mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
               isBitActive = (parseInt(val) & (1 << opts.bit_index)) !== 0;
             }
 
