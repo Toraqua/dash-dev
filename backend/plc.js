@@ -261,6 +261,7 @@ class PLCService extends EventEmitter {
         }
 
         this.state[v.name] = finalValue;
+        if (v.display_name) this.state[v.display_name] = finalValue;
         stateChanged = true;
 
         // Logar no banco com o intervalo configurado em "Geral" (padrão 15s)

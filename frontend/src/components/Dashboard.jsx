@@ -423,22 +423,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
   };
 
   const handleToggleSwitch = async (variable, currentValue) => {
-    const newValue = !currentValue;
-    try {
-      await fetch(getBaseUrl() + '/api/modbus/write', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: variable.device_id,
-          modbus_type: variable.modbus_type,
-          address: variable.modbus_address,
-          value: newValue,
-          decimals: variable.decimals
-        })
-      });
-    } catch (e) {
-      console.error('Erro ao alternar switch', e);
-    }
+    await modbusWrite(variable, !currentValue);
   };
 
   const modbusWrite = async (variable, value) => {
