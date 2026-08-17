@@ -1,9 +1,119 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter } from 'recharts';
 import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+
+// ─── BitButtonWidget ───────────────────────────────────────────────────────────
+// Componente isolado com estado local para evitar que o poll do socket
+// sobrescreva o estado visual antes de confirmar o valor real do CLP.
+function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
+  const [localActive, setLocalActive] = useState(Boolean(plcStateValue === true || plcStateValue === 1));
+  const [isPending, setIsPending] = useState(false);
+  const pendingRef = useRef(false);
+
+  // Sincroniza com o CLP somente quando NÃO há uma escrita pendente
+  useEffect(() => {
+    if (!pendingRef.current) {
+      const newVal = plcStateValue === true || plcStateValue === 1 || plcStateValue === '1' || plcStateValue === 'true';
+      setLocalActive(newVal);
+    }
+  }, [plcStateValue]);
+
+  const mode = opts.button_mode || 'toggle';
+  const labelOff = opts.label_off || 'DESLIGADO';
+  const labelOn  = opts.label_on  || 'LIGADO';
+  const colorOff = opts.color_off || '#ef4444';
+  const colorOn  = opts.color_on  || variable.color || '#22c55e';
+  const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
+
+  const handleClick = async () => {
+    let newVal;
+    if (mode === 'toggle')     newVal = !localActive;
+    else if (mode === 'set')   newVal = true;
+    else if (mode === 'reset') newVal = false;
+    else return;
+
+    // Atualizar visualmente de imediato (sem esperar o CLP)
+    setLocalActive(newVal);
+    setIsPending(true);
+    pendingRef.current = true;
+
+    await onWrite(variable, newVal);
+
+    // Liberar trava após 2s para aceitar atualização do CLP
+    setTimeout(() => {
+      pendingRef.current = false;
+      setIsPending(false);
+    }, 2000);
+  };
+
+  const handleDown = async () => {
+    const newVal = mode === 'momentary_on';
+    setLocalActive(newVal);
+    pendingRef.current = true;
+    await onWrite(variable, newVal);
+  };
+
+  const handleUp = async () => {
+    const newVal = mode === 'momentary_off';
+    setLocalActive(!newVal);
+    pendingRef.current = true;
+    await onWrite(variable, newVal);
+    setTimeout(() => { pendingRef.current = false; }, 2000);
+  };
+
+  const activeColor = localActive ? colorOn : colorOff;
+  const activeText  = localActive ? labelOn  : labelOff;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
+      <button
+        type="button"
+        onMouseDown={isPressMode ? handleDown : undefined}
+        onMouseUp={isPressMode ? handleUp : undefined}
+        onMouseLeave={isPressMode ? handleUp : undefined}
+        onTouchStart={isPressMode ? handleDown : undefined}
+        onTouchEnd={isPressMode ? handleUp : undefined}
+        onClick={!isPressMode ? handleClick : undefined}
+        style={{
+          width: '85%',
+          padding: '0.75rem 1.2rem',
+          borderRadius: '12px',
+          border: `2px solid ${activeColor}`,
+          background: localActive ? `${colorOn}25` : `${colorOff}15`,
+          color: activeColor,
+          fontWeight: 'bold',
+          fontSize: '1rem',
+          cursor: isPending ? 'wait' : 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '0.6rem',
+          boxShadow: localActive ? `0 0 15px ${colorOn}40` : 'none',
+          transition: 'all 0.15s ease',
+          userSelect: 'none',
+          opacity: isPending ? 0.85 : 1
+        }}
+      >
+        <Power size={20} color={activeColor} />
+        {activeText}
+        {isPending && <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>⟳</span>}
+      </button>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
+        {mode === 'toggle'       ? 'Modo: Alternar (Toggle)' :
+         mode === 'set'          ? 'Modo: Set Bit (Ligar)' :
+         mode === 'reset'        ? 'Modo: Reset Bit (Desligar)' :
+         mode === 'momentary_on' ? 'Modo: Pulsador (Norm. Aberto)' :
+                                   'Modo: Pulsador (Norm. Fechado)'}
+        {(variable.modbus_type === 'holding' || variable.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
+      </div>
+    </div>
+  );
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 
 function TableWidget({ v, val, history = [] }) {
   const [pageSize, setPageSize] = useState(10);
@@ -712,72 +822,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                       )}
 
                       {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
-                      {v.widget_type === 'bit_button' && (() => {
-                        const mode = opts.button_mode || 'toggle';
-                        const labelOff = opts.label_off || 'DESLIGADO';
-                        const labelOn = opts.label_on || 'LIGADO';
-                        const colorOff = opts.color_off || '#ef4444';
-                        const colorOn = opts.color_on || v.color || '#22c55e';
-                        
-                        const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
-                        
-                        const handleDown = () => {
-                          if (mode === 'momentary_on') modbusWrite(v, true);
-                          if (mode === 'momentary_off') modbusWrite(v, false);
-                        };
-                        const handleUp = () => {
-                          if (mode === 'momentary_on') modbusWrite(v, false);
-                          if (mode === 'momentary_off') modbusWrite(v, true);
-                        };
-                        
-                        const activeColor = isBitActive ? colorOn : colorOff;
-                        const activeText = isBitActive ? labelOn : labelOff;
-
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
-                            <button
-                              type="button"
-                              onMouseDown={isPressMode ? handleDown : undefined}
-                              onMouseUp={isPressMode ? handleUp : undefined}
-                              onMouseLeave={isPressMode ? handleUp : undefined}
-                              onTouchStart={isPressMode ? handleDown : undefined}
-                              onTouchEnd={isPressMode ? handleUp : undefined}
-                              onClick={!isPressMode ? () => handleBitButton(v, isBitActive, mode) : undefined}
-                              style={{
-                                width: '85%',
-                                padding: '0.75rem 1.2rem',
-                                borderRadius: '12px',
-                                border: `2px solid ${activeColor}`,
-                                background: isBitActive ? `${colorOn}25` : `${colorOff}15`,
-                                color: activeColor,
-                                fontWeight: 'bold',
-                                fontSize: '1rem',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '0.6rem',
-                                boxShadow: isBitActive ? `0 0 15px ${colorOn}40` : 'none',
-                                transition: 'all 0.15s ease',
-                                userSelect: 'none'
-                              }}
-                            >
-                              <Power size={20} color={activeColor} />
-                              {activeText}
-                            </button>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
-                              {
-                                mode === 'toggle' ? 'Modo: Alternar (Toggle)' :
-                                mode === 'set' ? 'Modo: Set Bit (Ligar)' :
-                                mode === 'reset' ? 'Modo: Reset Bit (Desligar)' :
-                                mode === 'momentary_on' ? 'Modo: Pulsador (Norm. Aberto)' :
-                                mode === 'momentary_off' ? 'Modo: Pulsador (Norm. Fechado)' : `Modo: ${mode}`
-                              }
-                              {(v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
-                            </div>
-                          </div>
-                        );
-                      })()}
+                      {v.widget_type === 'bit_button' && (
+                        <BitButtonWidget variable={v} plcStateValue={val} opts={opts} onWrite={modbusWrite} />
+                      )}
 
                       {/* 6. LEVEL INDICATOR / TANK */}
                       {(v.widget_type === 'tank' || v.widget_type === 'level_indicator') && (() => {
@@ -1264,72 +1311,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                   )}
 
                   {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
-                  {v.widget_type === 'bit_button' && (() => {
-                    const mode = opts.button_mode || 'toggle';
-                    const labelOff = opts.label_off || 'DESLIGADO';
-                    const labelOn = opts.label_on || 'LIGADO';
-                    const colorOff = opts.color_off || '#ef4444';
-                    const colorOn = opts.color_on || v.color || '#22c55e';
-                    
-                    const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
-                    
-                    const handleDown = () => {
-                      if (mode === 'momentary_on') modbusWrite(v, true);
-                      if (mode === 'momentary_off') modbusWrite(v, false);
-                    };
-                    const handleUp = () => {
-                      if (mode === 'momentary_on') modbusWrite(v, false);
-                      if (mode === 'momentary_off') modbusWrite(v, true);
-                    };
-                    
-                    const activeColor = isBitActive ? colorOn : colorOff;
-                    const activeText = isBitActive ? labelOn : labelOff;
-
-                    return (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
-                        <button
-                          type="button"
-                          onMouseDown={isPressMode ? handleDown : undefined}
-                          onMouseUp={isPressMode ? handleUp : undefined}
-                          onMouseLeave={isPressMode ? handleUp : undefined}
-                          onTouchStart={isPressMode ? handleDown : undefined}
-                          onTouchEnd={isPressMode ? handleUp : undefined}
-                          onClick={!isPressMode ? () => handleBitButton(v, isBitActive, mode) : undefined}
-                          style={{
-                            width: '85%',
-                            padding: '0.75rem 1.2rem',
-                            borderRadius: '12px',
-                            border: `2px solid ${activeColor}`,
-                            background: isBitActive ? `${colorOn}25` : `${colorOff}15`,
-                            color: activeColor,
-                            fontWeight: 'bold',
-                            fontSize: '1rem',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.6rem',
-                            boxShadow: isBitActive ? `0 0 15px ${colorOn}40` : 'none',
-                            transition: 'all 0.15s ease',
-                            userSelect: 'none'
-                          }}
-                        >
-                          <Power size={20} color={activeColor} />
-                          {activeText}
-                        </button>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
-                          {
-                            mode === 'toggle' ? 'Modo: Alternar (Toggle)' :
-                            mode === 'set' ? 'Modo: Set Bit (Ligar)' :
-                            mode === 'reset' ? 'Modo: Reset Bit (Desligar)' :
-                            mode === 'momentary_on' ? 'Modo: Pulsador (Norm. Aberto)' :
-                            mode === 'momentary_off' ? 'Modo: Pulsador (Norm. Fechado)' : `Modo: ${mode}`
-                          }
-                          {(v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
-                        </div>
-                      </div>
-                    );
-                  })()}
+                  {v.widget_type === 'bit_button' && (
+                    <BitButtonWidget variable={v} plcStateValue={val} opts={opts} onWrite={modbusWrite} />
+                  )}
 
                   {/* 6. LEVEL INDICATOR / TANK */}
                   {(v.widget_type === 'tank' || v.widget_type === 'level_indicator') && (() => {
