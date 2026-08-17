@@ -222,6 +222,7 @@ class PLCService extends EventEmitter {
           } else if (mType === 'coil') {
             const res = await dev.client.readCoils(wireAddr, 1);
             rawValue = res && res.data ? res.data[0] : false;
+            console.log(`[Modbus Poll] coil addr=${wireAddr} => ${rawValue} (var: ${v.name})`);
             readSuccess = true;
           } else if (mType === 'discrete' || mType === 'inputstatus') {
             const res = await dev.client.readDiscreteInputs(wireAddr, 1);
@@ -337,27 +338,46 @@ class PLCService extends EventEmitter {
     const mType = String(modbus_type || '').toLowerCase();
     const wireAddr = Math.max(0, parseInt(address) || 0);
 
-    // Se o dispositivo estiver offline ou em simulação, atualiza estado em memória
-    if (!dev || !dev.connected) {
-      if (var_name) {
-        let optVal = value;
-        if ((mType === 'holding' || mType === 'holdingregister') && bit_index >= 0) {
-          const bitIdx = parseInt(bit_index);
-          const curWord = this.state[var_name] ? 1 : 0;
-          optVal = Boolean(value) ? (curWord | (1 << bitIdx)) : (curWord & ~(1 << bitIdx));
-          this.state[var_name] = Boolean(optVal);
-        } else {
-          this.state[var_name] = value;
+    console.log(`[Modbus Write] devId=${deviceId} type=${mType} addr=${wireAddr} value=${value} bit=${bit_index} var=${var_name}`);
+
+    // Helper: find variable by name and update state for all its keys
+    const updateState = (val) => {
+      if (!var_name) return;
+      this.state[var_name] = val;
+      // Also update display_name key if we can find it
+      for (const devId in this.devices) {
+        const vars = this.devices[devId].variables || [];
+        const found = vars.find(v => v.name === var_name);
+        if (found && found.display_name) {
+          this.state[found.display_name] = val;
+          console.log(`[Modbus Write] state[${found.display_name}] = ${val}`);
         }
-        this.emit('update', this.state);
       }
+      console.log(`[Modbus Write] state[${var_name}] = ${val}`);
+    };
+
+    // Se o dispositivo estiver offline, atualiza estado em memória
+    if (!dev || !dev.connected) {
+      console.warn(`[Modbus Write] Dispositivo ${deviceId} offline - atualizando estado em memória apenas`);
+      if (mType === 'coil') {
+        updateState(Boolean(value));
+      } else if ((mType === 'holding' || mType === 'holdingregister') && parseInt(bit_index) >= 0) {
+        const bitIdx = parseInt(bit_index);
+        const curWord = parseInt(this.state[var_name]) || 0;
+        const newWord = Boolean(value) ? (curWord | (1 << bitIdx)) : (curWord & ~(1 << bitIdx));
+        updateState(Boolean((newWord >> bitIdx) & 1));
+      } else {
+        updateState(value);
+      }
+      this.emit('update', this.state);
       return true;
     }
 
     if (mType === 'coil') {
       const boolVal = Boolean(value);
+      console.log(`[Modbus Write] writeCoil(${wireAddr}, ${boolVal})`);
       await dev.client.writeCoil(wireAddr, boolVal);
-      if (var_name) this.state[var_name] = boolVal;
+      updateState(boolVal);
     } else if (mType === 'holding' || mType === 'holdingregister') {
       if (bit_index !== undefined && bit_index !== null && parseInt(bit_index) >= 0) {
         const bitIdx = parseInt(bit_index);
@@ -366,18 +386,15 @@ class PLCService extends EventEmitter {
           const res = await dev.client.readHoldingRegisters(wireAddr, 1);
           if (res && res.data) curWord = res.data[0];
         } catch(e) {}
-        let newWord = curWord;
-        if (Boolean(value)) {
-          newWord = curWord | (1 << bitIdx);
-        } else {
-          newWord = curWord & ~(1 << bitIdx);
-        }
+        const newWord = Boolean(value) ? (curWord | (1 << bitIdx)) : (curWord & ~(1 << bitIdx));
+        console.log(`[Modbus Write] writeRegister(${wireAddr}, ${newWord}) bit ${bitIdx} = ${Boolean(value)}`);
         await dev.client.writeRegister(wireAddr, newWord);
-        if (var_name) this.state[var_name] = Boolean((newWord >> bitIdx) & 1);
+        updateState(Boolean((newWord >> bitIdx) & 1));
       } else {
         const rawValue = Math.round(Number(value) * Math.pow(10, decimals || 0));
+        console.log(`[Modbus Write] writeRegister(${wireAddr}, ${rawValue})`);
         await dev.client.writeRegister(wireAddr, rawValue);
-        if (var_name) this.state[var_name] = Number(value);
+        updateState(Number(value));
       }
     } else {
       throw new Error('Tipo Modbus não suporta escrita');

@@ -241,7 +241,7 @@ function App() {
     });
 
     newSocket.on('update', (data) => {
-      setPlcState(data);
+      setPlcState(prev => ({ ...prev, ...data }));
     });
 
     newSocket.on('alarms_updated', () => {
