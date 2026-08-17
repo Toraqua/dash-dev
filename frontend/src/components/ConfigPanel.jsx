@@ -457,7 +457,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
           const displayName = varNameParts[varNameParts.length - 1]; 
           
           const dataTypeStr = parts[2].replace(/"/g, '').trim(); 
-          const address = Math.max(0, parseInt(parts[3].replace(/"/g, '').trim()) - 1); 
+          const address = Math.max(1, parseInt(parts[3].replace(/"/g, '').trim()) || 1); 
           const iecType = parts[5].replace(/"/g, '').trim(); 
           
           let modbus_type = 'holding';

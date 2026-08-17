@@ -205,23 +205,27 @@ class PLCService extends EventEmitter {
         const numRegisters = String(dataFormat).startsWith('32') ? 2 : 1;
         const mType = String(v.modbus_type || '').toLowerCase();
 
+        // Converte endereço 1-based para offset 0-based da rede Modbus
+        const rawAddr = parseInt(v.modbus_address) || 0;
+        const wireAddr = rawAddr > 0 ? rawAddr - 1 : 0;
+
         let rawValue = null;
         let readSuccess = false;
         try {
           if (mType === 'holding' || mType === 'holdingregister') {
-            const res = await dev.client.readHoldingRegisters(v.modbus_address, numRegisters);
+            const res = await dev.client.readHoldingRegisters(wireAddr, numRegisters);
             rawValue = res && res.data ? parseModbusValue(res.data, dataFormat, endianness) : 0;
             readSuccess = true;
           } else if (mType === 'input' || mType === 'inputregister') {
-            const res = await dev.client.readInputRegisters(v.modbus_address, numRegisters);
+            const res = await dev.client.readInputRegisters(wireAddr, numRegisters);
             rawValue = res && res.data ? parseModbusValue(res.data, dataFormat, endianness) : 0;
             readSuccess = true;
           } else if (mType === 'coil') {
-            const res = await dev.client.readCoils(v.modbus_address, 1);
+            const res = await dev.client.readCoils(wireAddr, 1);
             rawValue = res && res.data ? res.data[0] : false;
             readSuccess = true;
           } else if (mType === 'discrete' || mType === 'inputstatus') {
-            const res = await dev.client.readDiscreteInputs(v.modbus_address, 1);
+            const res = await dev.client.readDiscreteInputs(wireAddr, 1);
             rawValue = res && res.data ? res.data[0] : false;
             readSuccess = true;
           }
@@ -277,18 +281,21 @@ class PLCService extends EventEmitter {
         for (const alarm of dev.alarms) {
           let rawAlarmVal;
           const aType = String(alarm.modbus_type || '').toLowerCase();
+          const rawAlarmAddr = parseInt(alarm.modbus_address) || 0;
+          const wireAlarmAddr = rawAlarmAddr > 0 ? rawAlarmAddr - 1 : 0;
+
           try {
             if (aType === 'holding' || aType === 'holdingregister') {
-              const res = await dev.client.readHoldingRegisters(alarm.modbus_address, 1);
+              const res = await dev.client.readHoldingRegisters(wireAlarmAddr, 1);
               rawAlarmVal = res && res.data ? res.data[0] : undefined;
             } else if (aType === 'input' || aType === 'inputregister') {
-              const res = await dev.client.readInputRegisters(alarm.modbus_address, 1);
+              const res = await dev.client.readInputRegisters(wireAlarmAddr, 1);
               rawAlarmVal = res && res.data ? res.data[0] : undefined;
             } else if (aType === 'coil') {
-              const res = await dev.client.readCoils(alarm.modbus_address, 1);
+              const res = await dev.client.readCoils(wireAlarmAddr, 1);
               rawAlarmVal = res && res.data ? (res.data[0] ? 1 : 0) : undefined;
             } else if (aType === 'discrete' || aType === 'inputstatus') {
-              const res = await dev.client.readDiscreteInputs(alarm.modbus_address, 1);
+              const res = await dev.client.readDiscreteInputs(wireAlarmAddr, 1);
               rawAlarmVal = res && res.data ? (res.data[0] ? 1 : 0) : undefined;
             }
           } catch(errAlarm) {
@@ -329,6 +336,8 @@ class PLCService extends EventEmitter {
   async writeModbus(deviceId, modbus_type, address, value, decimals = 0, bit_index = -1, var_name = null) {
     const dev = this.devices[deviceId];
     const mType = String(modbus_type || '').toLowerCase();
+    const rawAddr = parseInt(address) || 0;
+    const wireAddr = rawAddr > 0 ? rawAddr - 1 : 0;
 
     // Se o dispositivo estiver offline ou em simulação, atualiza estado em memória
     if (!dev || !dev.connected) {
@@ -349,14 +358,14 @@ class PLCService extends EventEmitter {
 
     if (mType === 'coil') {
       const boolVal = Boolean(value);
-      await dev.client.writeCoil(address, boolVal);
+      await dev.client.writeCoil(wireAddr, boolVal);
       if (var_name) this.state[var_name] = boolVal;
     } else if (mType === 'holding' || mType === 'holdingregister') {
       if (bit_index !== undefined && bit_index !== null && parseInt(bit_index) >= 0) {
         const bitIdx = parseInt(bit_index);
         let curWord = 0;
         try {
-          const res = await dev.client.readHoldingRegisters(address, 1);
+          const res = await dev.client.readHoldingRegisters(wireAddr, 1);
           if (res && res.data) curWord = res.data[0];
         } catch(e) {}
         let newWord = curWord;
@@ -365,11 +374,11 @@ class PLCService extends EventEmitter {
         } else {
           newWord = curWord & ~(1 << bitIdx);
         }
-        await dev.client.writeRegister(address, newWord);
+        await dev.client.writeRegister(wireAddr, newWord);
         if (var_name) this.state[var_name] = Boolean((newWord >> bitIdx) & 1);
       } else {
         const rawValue = Math.round(Number(value) * Math.pow(10, decimals || 0));
-        await dev.client.writeRegister(address, rawValue);
+        await dev.client.writeRegister(wireAddr, rawValue);
         if (var_name) this.state[var_name] = Number(value);
       }
     } else {
