@@ -447,13 +447,13 @@ function App() {
           </div>
         </div>
 
-        {activeTab === 'dashboard' && (
+        <div style={{ display: activeTab === 'dashboard' ? 'contents' : 'none' }}>
           <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} variables={variables.filter(v => v.category === 'supervision' || !v.category)} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
-        )}
+        </div>
 
-        {activeTab === 'engineering' && (
+        <div style={{ display: activeTab === 'engineering' ? 'contents' : 'none' }}>
           <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} variables={variables.filter(v => v.category === 'engineering')} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
-        )}
+        </div>
 
         {activeTab === 'config' && (
           <ConfigPanel socket={socket} variables={variables} cameras={cameras} devices={devices} generalConfig={generalConfig} onRefresh={fetchData} />
