@@ -64,12 +64,22 @@ class PLCService extends EventEmitter {
     this.devices = {}; // device_id -> { client, variables, interval }
     this.historyIntervalSeconds = 15;
     this.lastHistoryLogTime = {};
+    this.activeAlarmsSet = new Set();
     this.init();
   }
 
   init() {
     this.loadGeneralConfig();
+    this.loadActiveAlarms();
     this.reloadDevices();
+  }
+
+  loadActiveAlarms() {
+    db.all(`SELECT alarm_config_id FROM alarm_history WHERE status = 'ACTIVE'`, [], (err, rows) => {
+      if (!err && rows) {
+        rows.forEach(r => this.activeAlarmsSet.add(r.alarm_config_id));
+      }
+    });
   }
 
   loadGeneralConfig() {
@@ -126,27 +136,14 @@ class PLCService extends EventEmitter {
         });
         
         // Load alarms for this device
-        this.loadAlarmConfigs();
+        db.all('SELECT * FROM alarm_configs WHERE device_id = ?', [device.id], (err, alarms) => {
+          if (!err && alarms) {
+            this.devices[device.id].alarms = alarms;
+          }
+        });
 
         // Start connection attempts
         this.connectDevice(device.id);
-      });
-    });
-  }
-
-  loadAlarmConfigs() {
-    db.all('SELECT * FROM alarm_configs WHERE enabled = 1', [], (err, configs) => {
-      if (err || !configs) return;
-      
-      // Clear all existing alarms
-      for (const id in this.devices) {
-        this.devices[id].alarms = [];
-      }
-      
-      configs.forEach(alarm => {
-        if (this.devices[alarm.device_id]) {
-          this.devices[alarm.device_id].alarms.push(alarm);
-        }
       });
     });
   }
@@ -264,7 +261,7 @@ class PLCService extends EventEmitter {
         }
       }
 
-      // --- ALARM PROCESSING ---
+      // --- ALARM PROCESSING (High Performance In-Memory Check) ---
       if (dev.alarms && dev.alarms.length > 0) {
         for (const alarm of dev.alarms) {
           let rawAlarmVal;
@@ -289,23 +286,19 @@ class PLCService extends EventEmitter {
           if (rawAlarmVal === undefined) continue;
 
           const conditionMet = this.evaluateCondition(rawAlarmVal, alarm.condition_type, alarm.condition_value);
+          const isCurrentlyActive = this.activeAlarmsSet.has(alarm.id);
           
-          // Check current active state in DB
-          db.get(`SELECT id FROM alarm_history WHERE alarm_config_id = ? AND status = 'ACTIVE'`, [alarm.id], (err, activeRow) => {
-            if (err) return;
-            
-            if (conditionMet && !activeRow) {
-              // Trigger Alarm
-              db.run(`INSERT INTO alarm_history (alarm_config_id, trigger_value, status) VALUES (?, ?, 'ACTIVE')`, [alarm.id, rawAlarmVal], () => {
-                 this.emit('alarms_updated');
-              });
-            } else if (!conditionMet && activeRow) {
-              // Resolve Alarm
-              db.run(`UPDATE alarm_history SET status = 'RESOLVED', resolve_time = CURRENT_TIMESTAMP WHERE id = ?`, [activeRow.id], () => {
-                 this.emit('alarms_updated');
-              });
-            }
-          });
+          if (conditionMet && !isCurrentlyActive) {
+            this.activeAlarmsSet.add(alarm.id);
+            db.run(`INSERT INTO alarm_history (alarm_config_id, trigger_value, status) VALUES (?, ?, 'ACTIVE')`, [alarm.id, rawAlarmVal], () => {
+              this.emit('alarms_updated');
+            });
+          } else if (!conditionMet && isCurrentlyActive) {
+            this.activeAlarmsSet.delete(alarm.id);
+            db.run(`UPDATE alarm_history SET status = 'RESOLVED', resolve_time = CURRENT_TIMESTAMP WHERE alarm_config_id = ? AND status = 'ACTIVE'`, [alarm.id], () => {
+              this.emit('alarms_updated');
+            });
+          }
         }
       }
 
@@ -321,24 +314,41 @@ class PLCService extends EventEmitter {
     }
   }
 
-  writeModbus(deviceId, modbus_type, address, value, decimals) {
-    return new Promise((resolve, reject) => {
-      const dev = this.devices[deviceId];
-      if (!dev || !dev.connected) return reject(new Error('Dispositivo Offline'));
+  async writeModbus(deviceId, modbus_type, address, value, decimals = 0, bit_index = -1, var_name = null) {
+    const dev = this.devices[deviceId];
+    if (!dev || !dev.connected) throw new Error('Dispositivo Offline');
 
-      if (modbus_type === 'coil') {
-        dev.client.writeCoil(address, value)
-          .then(() => resolve(true))
-          .catch(reject);
-      } else if (modbus_type === 'holding') {
-        const rawValue = Math.round(value * Math.pow(10, decimals || 0));
-        dev.client.writeRegister(address, rawValue)
-          .then(() => resolve(true))
-          .catch(reject);
+    if (modbus_type === 'coil') {
+      const boolVal = Boolean(value);
+      await dev.client.writeCoil(address, boolVal);
+      if (var_name) this.state[var_name] = boolVal;
+    } else if (modbus_type === 'holding') {
+      if (bit_index !== undefined && bit_index !== null && parseInt(bit_index) >= 0) {
+        const bitIdx = parseInt(bit_index);
+        let curWord = 0;
+        try {
+          const res = await dev.client.readHoldingRegisters(address, 1);
+          if (res && res.data) curWord = res.data[0];
+        } catch(e) {}
+        let newWord = curWord;
+        if (Boolean(value)) {
+          newWord = curWord | (1 << bitIdx);
+        } else {
+          newWord = curWord & ~(1 << bitIdx);
+        }
+        await dev.client.writeRegister(address, newWord);
+        if (var_name) this.state[var_name] = Boolean((newWord >> bitIdx) & 1);
       } else {
-        reject(new Error('Tipo Modbus não suporta escrita'));
+        const rawValue = Math.round(Number(value) * Math.pow(10, decimals || 0));
+        await dev.client.writeRegister(address, rawValue);
+        if (var_name) this.state[var_name] = Number(value);
       }
-    });
+    } else {
+      throw new Error('Tipo Modbus não suporta escrita');
+    }
+
+    this.emit('update', this.state);
+    return true;
   }
 
   evaluateCondition(currentValue, operator, targetValue) {

@@ -178,7 +178,29 @@ function TableWidget({ v, val, history = [] }) {
   );
 }
 
-function Dashboard({ plcState, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
+const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!lastMs) return <span>Sem leitura</span>;
+  const seconds = Math.max(0, Math.floor((nowMs - lastMs) / 1000));
+  if (seconds < 60) return <span>Há {seconds} s</span>;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return <span>Há {minutes} m</span>;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return <span>Há {hours} h</span>;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return <span>Há {days} d</span>;
+  const months = Math.floor(days / 30);
+  if (months < 12) return <span>Há {months} {months === 1 ? 'mês' : 'meses'}</span>;
+  const years = Math.floor(days / 365);
+  return <span>Há {years} {years === 1 ? 'ano' : 'anos'}</span>;
+});
+
+function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
   const { width, containerRef } = useContainerWidth();
   const [isEditing, setIsEditing] = useState(false);
   const [currentLayout, setCurrentLayout] = useState([]);
@@ -188,7 +210,6 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
   const [lastReadTimes, setLastReadTimes] = useState({});
-  const [nowMs, setNowMs] = useState(Date.now());
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -197,11 +218,6 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
   }, []);
 
   const isMobileView = windowWidth <= 768;
-
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 5000);
-    return () => clearInterval(timer);
-  }, []);
 
   const fullLayout = useMemo(() => {
     const varItems = variables.map((v, index) => {
@@ -261,21 +277,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
     return 'http://localhost:3001';
   };
 
-  const formatTimeAgo = (lastMs) => {
-    if (!lastMs) return 'Sem leitura';
-    const seconds = Math.max(0, Math.floor((nowMs - lastMs) / 1000));
-    if (seconds < 60) return `Há ${seconds} s`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `Há ${minutes} m`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `Há ${hours} h`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `Há ${days} d`;
-    const months = Math.floor(days / 30);
-    if (months < 12) return `Há ${months} ${months === 1 ? 'mês' : 'meses'}`;
-    const years = Math.floor(days / 365);
-    return `Há ${years} ${years === 1 ? 'ano' : 'anos'}`;
-  };
+
 
   const formatTime = (ts) => {
     if (!ts) return '';
@@ -346,8 +348,10 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
     setLastReadTimes(prev => {
       const next = { ...prev };
       variables.forEach(v => {
-        if (plcState[v.name] !== undefined) {
+        const hasVal = plcState[v.name] !== undefined || plcState[v.display_name] !== undefined;
+        if (hasVal) {
           next[v.name] = nowMs;
+          next[v.display_name] = nowMs;
         }
       });
       return next;
@@ -358,14 +362,16 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
       let updated = false;
       variables.forEach(v => {
         if (v.widget_type === 'graph' || v.widget_type === 'timeseries' || v.widget_type === 'table') {
-          const rawVal = plcState[v.name];
+          const rawVal = plcState[v.name] !== undefined ? plcState[v.name] : plcState[v.display_name];
           if (rawVal !== undefined) {
-            const val = rawVal;
             const currentArr = next[v.id] || [];
-            const newArr = [...currentArr, { time: nowTime, val, raw_ts: nowMs }];
-            if (newArr.length > 2000) newArr.shift();
-            next[v.id] = newArr;
-            updated = true;
+            const lastItem = currentArr[currentArr.length - 1];
+            if (!lastItem || (nowMs - lastItem.raw_ts >= 2000) || lastItem.val !== rawVal) {
+              const newArr = [...currentArr, { time: nowTime, val: rawVal, raw_ts: nowMs }];
+              if (newArr.length > 2000) newArr.shift();
+              next[v.id] = newArr;
+              updated = true;
+            }
           }
         }
       });
@@ -436,17 +442,44 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
   };
 
   const modbusWrite = async (variable, value) => {
-    await fetch(getBaseUrl() + '/api/modbus/write', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        device_id: variable.device_id,
-        modbus_type: variable.modbus_type,
-        address: variable.modbus_address,
-        value,
-        decimals: variable.decimals
-      })
-    });
+    let opts = {};
+    try {
+      opts = typeof variable.options === 'string' ? JSON.parse(variable.options || '{}') : (variable.options || {});
+    } catch(e) {}
+
+    // Optimistic UI update in 0ms!
+    if (setPlcState) {
+      setPlcState(prev => {
+        const next = { ...prev };
+        let optVal = value;
+        if ((variable.modbus_type === 'holding' || variable.modbus_type === 'input') && opts.bit_index !== undefined && opts.bit_index >= 0) {
+          const bitIdx = parseInt(opts.bit_index);
+          const curWord = prev[variable.name] !== undefined ? parseInt(prev[variable.name]) : 0;
+          optVal = Boolean(value) ? (curWord | (1 << bitIdx)) : (curWord & ~(1 << bitIdx));
+        }
+        if (variable.name) next[variable.name] = optVal;
+        if (variable.display_name) next[variable.display_name] = optVal;
+        return next;
+      });
+    }
+
+    try {
+      await fetch(getBaseUrl() + '/api/modbus/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: variable.device_id,
+          modbus_type: variable.modbus_type,
+          address: variable.modbus_address,
+          value,
+          decimals: variable.decimals,
+          bit_index: opts.bit_index !== undefined ? opts.bit_index : -1,
+          var_name: variable.name
+        })
+      });
+    } catch (e) {
+      console.error('Erro na escrita Modbus:', e);
+    }
   };
 
   const handleBitButton = async (variable, currentVal, mode) => {
@@ -533,7 +566,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                   opts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
                 } catch(e) {}
 
-                const val = plcState[v.name] !== undefined ? plcState[v.name] : 0;
+                const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
                 
                 let isBitActive = Boolean(val);
                 if ((v.modbus_type === 'holding' || v.modbus_type === 'input') && opts.bit_index !== undefined && opts.bit_index >= 0) {
@@ -1021,7 +1054,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                     {v.widget_type !== 'header' && (
                       <div style={{ position: 'absolute', bottom: '6px', right: '10px', fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '3px', pointerEvents: 'none' }}>
                         <Clock size={10} />
-                        {formatTimeAgo(lastReadTimes[v.name])}
+                        <TimeAgo lastMs={lastReadTimes[v.name] || lastReadTimes[v.display_name]} />
                       </div>
                     )}
                   </div>
@@ -1079,7 +1112,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
               opts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
             } catch(e) {}
 
-            const val = plcState[v.name] !== undefined ? plcState[v.name] : 0;
+            const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
             
             // Evaluation of boolean / bit value based on bit_index option
             let isBitActive = Boolean(val);
@@ -1573,7 +1606,7 @@ function Dashboard({ plcState, variables = [], cameras = [], currentUser, genera
                 {v.widget_type !== 'header' && (
                   <div style={{ position: 'absolute', bottom: '6px', right: '10px', fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '3px', pointerEvents: 'none' }}>
                     <Clock size={10} />
-                    {formatTimeAgo(lastReadTimes[v.name])}
+                    <TimeAgo lastMs={lastReadTimes[v.name] || lastReadTimes[v.display_name]} />
                   </div>
                 )}
               </div>

@@ -258,9 +258,9 @@ app.get('/api/history/:variableId', (req, res) => {
 
 // --- API Gravação Modbus ---
 app.post('/api/modbus/write', async (req, res) => {
-  const { device_id, modbus_type, address, value, decimals, username } = req.body;
+  const { device_id, modbus_type, address, value, decimals, bit_index, var_name, username } = req.body;
   try {
-    await plc.writeModbus(device_id, modbus_type, address, value, decimals);
+    await plc.writeModbus(device_id, modbus_type, address, value, decimals, bit_index, var_name);
     logAudit(username || 'Operador', 'ESCRITA_MODBUS', `Dispositivo ${device_id} [${modbus_type} #${address}]`, '', value, 'SUCESSO');
     res.json({ success: true });
   } catch(e) {
