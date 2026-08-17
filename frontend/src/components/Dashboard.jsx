@@ -9,15 +9,14 @@ import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Tabl
 // Componente isolado com estado local para evitar que o poll do socket
 // sobrescreva o estado visual antes de confirmar o valor real do CLP.
 function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
-  const [localActive, setLocalActive] = useState(Boolean(plcStateValue === true || plcStateValue === 1));
+  const [localActive, setLocalActive] = useState(Boolean(plcStateValue));
   const [isPending, setIsPending] = useState(false);
   const pendingRef = useRef(false);
 
   // Sincroniza com o CLP somente quando NÃO há uma escrita pendente
   useEffect(() => {
     if (!pendingRef.current) {
-      const newVal = plcStateValue === true || plcStateValue === 1 || plcStateValue === '1' || plcStateValue === 'true';
-      setLocalActive(newVal);
+      setLocalActive(Boolean(plcStateValue));
     }
   }, [plcStateValue]);
 
@@ -664,7 +663,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                 const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
                 const mType = String(v.modbus_type || '').toLowerCase();
                 let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
-                if ((mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
+                if (typeof val === 'number' && (mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
                   const numVal = parseInt(val) || 0;
                   isBitActive = (numVal & (1 << opts.bit_index)) !== 0;
                 }
@@ -823,7 +822,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
 
                       {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
                       {v.widget_type === 'bit_button' && (
-                        <BitButtonWidget variable={v} plcStateValue={val} opts={opts} onWrite={modbusWrite} />
+                        <BitButtonWidget variable={v} plcStateValue={isBitActive} opts={opts} onWrite={modbusWrite} />
                       )}
 
                       {/* 6. LEVEL INDICATOR / TANK */}
@@ -1148,7 +1147,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
             const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
             const mType = String(v.modbus_type || '').toLowerCase();
             let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
-            if ((mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
+            if (typeof val === 'number' && (mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
               const numVal = parseInt(val) || 0;
               isBitActive = (numVal & (1 << opts.bit_index)) !== 0;
             }
@@ -1312,7 +1311,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
 
                   {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
                   {v.widget_type === 'bit_button' && (
-                    <BitButtonWidget variable={v} plcStateValue={val} opts={opts} onWrite={modbusWrite} />
+                    <BitButtonWidget variable={v} plcStateValue={isBitActive} opts={opts} onWrite={modbusWrite} />
                   )}
 
                   {/* 6. LEVEL INDICATOR / TANK */}
