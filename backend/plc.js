@@ -205,9 +205,8 @@ class PLCService extends EventEmitter {
         const numRegisters = String(dataFormat).startsWith('32') ? 2 : 1;
         const mType = String(v.modbus_type || '').toLowerCase();
 
-        // Converte endereço 1-based para offset 0-based da rede Modbus
-        const rawAddr = parseInt(v.modbus_address) || 0;
-        const wireAddr = rawAddr > 0 ? rawAddr - 1 : 0;
+        // Endereço de offset direto para a rede Modbus
+        const wireAddr = Math.max(0, parseInt(v.modbus_address) || 0);
 
         let rawValue = null;
         let readSuccess = false;
@@ -281,8 +280,7 @@ class PLCService extends EventEmitter {
         for (const alarm of dev.alarms) {
           let rawAlarmVal;
           const aType = String(alarm.modbus_type || '').toLowerCase();
-          const rawAlarmAddr = parseInt(alarm.modbus_address) || 0;
-          const wireAlarmAddr = rawAlarmAddr > 0 ? rawAlarmAddr - 1 : 0;
+          const wireAlarmAddr = Math.max(0, parseInt(alarm.modbus_address) || 0);
 
           try {
             if (aType === 'holding' || aType === 'holdingregister') {
@@ -336,8 +334,7 @@ class PLCService extends EventEmitter {
   async writeModbus(deviceId, modbus_type, address, value, decimals = 0, bit_index = -1, var_name = null) {
     const dev = this.devices[deviceId];
     const mType = String(modbus_type || '').toLowerCase();
-    const rawAddr = parseInt(address) || 0;
-    const wireAddr = rawAddr > 0 ? rawAddr - 1 : 0;
+    const wireAddr = Math.max(0, parseInt(address) || 0);
 
     // Se o dispositivo estiver offline ou em simulação, atualiza estado em memória
     if (!dev || !dev.connected) {
