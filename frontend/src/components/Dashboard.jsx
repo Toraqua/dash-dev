@@ -714,10 +714,16 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
   };
 
   const handleWriteModbus = async (variable) => {
+    if (!currentUser) {
+      if (onRequireLogin) onRequireLogin();
+      return;
+    }
+
     const value = inputValues[variable.id];
     if (value === undefined || value === '') return;
+
     try {
-      await fetch(getBaseUrl() + '/api/modbus/write', {
+      const res = await fetch(getBaseUrl() + '/api/modbus/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -725,12 +731,30 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
           modbus_type: variable.modbus_type,
           address: variable.modbus_address,
           value: parseFloat(value),
-          decimals: variable.decimals
+          decimals: variable.decimals,
+          var_name: variable.name,
+          username: currentUser.username
         })
       });
+      
+      const data = await res.json();
+      if (!res.ok) {
+        alert('Falha ao escrever Modbus: ' + (data.error || 'Erro desconhecido.'));
+      } else {
+        // Atualiza a interface otimisticamente
+        if (setPlcState) {
+          setPlcState(prev => {
+            const next = { ...prev };
+            if (variable.name) next[variable.name] = parseFloat(value);
+            if (variable.display_name) next[variable.display_name] = parseFloat(value);
+            return next;
+          });
+        }
+      }
       setInputValues(prev => ({ ...prev, [variable.id]: '' }));
     } catch (e) {
       console.error('Erro ao escrever valor', e);
+      alert('Erro de rede ou servidor ao escrever Modbus.');
     }
   };
 
