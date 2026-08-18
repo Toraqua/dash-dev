@@ -24,73 +24,63 @@ import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Tabl
 //   'momentary_off'— Escreve 0 enquanto pressionado, 1 ao soltar (NF)
 // =============================================================================
 function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
-  // Estado visual local — independente do poll do socket durante escritas pendentes
-  const [localActive, setLocalActive] = useState(Boolean(plcStateValue));
-  // Flag visual de pendência (mostra indicador ⟳ e cursor: wait)
-  const [isPending, setIsPending] = useState(false);
-  // Ref de trava: impede que o useEffect sync sobrescreva durante 2s após clique
-  const pendingRef = useRef(false);
+  // Guarda o valor otimista enquanto a escrita está pendente
+  const [pendingVal, setPendingVal] = useState(null);
+  const [isPending, setIsPending]   = useState(false);
 
-  // Sincroniza o estado local com o CLP somente quando NÃO há escrita pendente.
-  // Isso evita que o poll do socket "pisque" o botão antes da confirmação do CLP.
-  useEffect(() => {
-    if (!pendingRef.current) {
-      setLocalActive(Boolean(plcStateValue));
-    }
-  }, [plcStateValue]);
+  // Valor exibido: se houver escrita pendente, usa o valor otimista; senão usa SEMPRE o valor real do CLP
+  const displayActive = isPending && pendingVal !== null ? pendingVal : Boolean(plcStateValue);
 
   const mode        = opts.button_mode || 'toggle';
   const labelOff    = opts.label_off || 'DESLIGADO';
   const labelOn     = opts.label_on  || 'LIGADO';
   const colorOff    = opts.color_off || '#ef4444';
   const colorOn     = opts.color_on  || variable.color || '#22c55e';
-  // Pulsador: usa eventos de mouse/touch em vez de click
   const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
 
   // Tratador de clique para modos não-pulsadores (toggle, set, reset)
   const handleClick = async () => {
     let newVal;
-    if      (mode === 'toggle') newVal = !localActive; // Inverte estado atual
-    else if (mode === 'set')    newVal = true;          // Força ligado
-    else if (mode === 'reset')  newVal = false;         // Força desligado
+    if      (mode === 'toggle') newVal = !displayActive; // Inverte estado exibido
+    else if (mode === 'set')    newVal = true;           // Força ligado
+    else if (mode === 'reset')  newVal = false;          // Força desligado
     else return;
 
-    setLocalActive(newVal);    // Feedback visual imediato (sem esperar CLP)
+    setPendingVal(newVal);   // Mostra otimista
     setIsPending(true);
-    pendingRef.current = true; // Travar sync com poll por 2 segundos
 
-    await onWrite(variable, newVal); // Enviar ao backend → CLP
+    await onWrite(variable, newVal);
 
-    // Liberar trava após 2s (tempo suficiente para o poll confirmar o novo valor)
+    // Retorna ao estado do CLP após 1.5s (tempo para o poll capturar)
     setTimeout(() => {
-      pendingRef.current = false;
       setIsPending(false);
-    }, 2000);
+      setPendingVal(null);
+    }, 1500);
   };
 
-  // Tratador mouseDown/touchStart — início do pulso (pulsador NA: escreve 1; NF: escreve 0)
+  // Pulsador NA (0 → 1 enquanto pressionado) / NF (1 → 0 enquanto pressionado)
   const handleDown = async () => {
-    const newVal = mode === 'momentary_on'; // NA=true (liga ao pressionar); NF=false
-    setLocalActive(newVal);
-    pendingRef.current = true;
+    const newVal = mode === 'momentary_on';
+    setPendingVal(newVal);
+    setIsPending(true);
     await onWrite(variable, newVal);
   };
 
-  // Tratador mouseUp/touchEnd/mouseLeave — fim do pulso (retorna ao estado oposto)
   const handleUp = async () => {
-    const newVal = mode === 'momentary_off'; // NF=true (liga ao soltar); NA=false
-    setLocalActive(!newVal);
-    pendingRef.current = true;
+    const newVal = mode === 'momentary_off';
+    setPendingVal(newVal);
     await onWrite(variable, newVal);
-    setTimeout(() => { pendingRef.current = false; }, 2000);
+    setTimeout(() => {
+      setIsPending(false);
+      setPendingVal(null);
+    }, 1500);
   };
 
-  const activeColor = localActive ? colorOn  : colorOff;
-  const activeText  = localActive ? labelOn  : labelOff;
+  const activeColor = displayActive ? colorOn : colorOff;
+  const activeText  = displayActive ? labelOn : labelOff;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
-      {/* Botão principal — visual de comando com borda e glow coloridos */}
       <button
         type="button"
         onMouseDown={isPressMode ? handleDown : undefined}
@@ -102,11 +92,11 @@ function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
         style={{
           width: '85%', padding: '0.75rem 1.2rem', borderRadius: '12px',
           border: `2px solid ${activeColor}`,
-          background: localActive ? `${colorOn}25` : `${colorOff}15`,
+          background: displayActive ? `${colorOn}25` : `${colorOff}15`,
           color: activeColor, fontWeight: 'bold', fontSize: '1rem',
           cursor: isPending ? 'wait' : 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem',
-          boxShadow: localActive ? `0 0 15px ${colorOn}40` : 'none',
+          boxShadow: displayActive ? `0 0 15px ${colorOn}40` : 'none',
           transition: 'all 0.15s ease', userSelect: 'none',
           opacity: isPending ? 0.85 : 1
         }}
@@ -115,7 +105,6 @@ function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
         {activeText}
         {isPending && <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>⟳</span>}
       </button>
-      {/* Legenda informativa do modo de operação */}
       <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
         {mode === 'toggle'        ? 'Modo: Alternar (Toggle)'         :
          mode === 'set'           ? 'Modo: Set Bit (Ligar)'           :
@@ -130,32 +119,16 @@ function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
 
 // =============================================================================
 // BitSwitchWidget — Badge/pill clicável para controle Modbus de bits digitais.
-// Funciona identicamente ao BitButtonWidget (mesma lógica de estado local,
-// pendingRef e modos de operação) mas com visual de "badge de status" arredondado.
-// Ideal para representar estados ON/OFF de equipamentos com controle de escrita.
-//
-// DIFERENÇA vs BitButtonWidget: visual pill (badge arredondado) em vez de botão
-// retangular — mais compacto e parecido com o indicador de status existente.
-//
-// Modos suportados (opts.button_mode): toggle, set, reset, momentary_on, momentary_off
-// Se button_mode não estiver definido, age como indicador read-only (bitmap).
-//
-// Props: idênticas ao BitButtonWidget
+// Reativo ao vivo: quando sem escrita pendente, mostra SEMPRE plcStateValue do CLP.
+// Quando o usuário clica, mostra pendingVal por 1.5s antes de liberar o sync.
 // =============================================================================
 function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
-  // Estado visual local — independente do poll durante escritas pendentes
-  const [localActive, setLocalActive] = useState(Boolean(plcStateValue));
-  // Flag visual de pendência
-  const [isPending, setIsPending]     = useState(false);
-  // Trava de sync: evita "piscar" durante 2s após clique
-  const pendingRef = useRef(false);
+  // Estado otimista temporário para escrita pendente
+  const [pendingVal, setPendingVal] = useState(null);
+  const [isPending, setIsPending]   = useState(false);
 
-  // Sincroniza com o CLP somente quando não há escrita pendente
-  useEffect(() => {
-    if (!pendingRef.current) {
-      setLocalActive(Boolean(plcStateValue));
-    }
-  }, [plcStateValue]);
+  // Valor exibido: se houver escrita pendente, usa pendingVal; senão usa SEMPRE o valor real do CLP
+  const displayActive = isPending && pendingVal !== null ? pendingVal : Boolean(plcStateValue);
 
   const mode        = opts.button_mode || null; // null = read-only (bitmap)
   const labelOff    = opts.label_off || 'DESLIGADO';
@@ -163,52 +136,55 @@ function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
   const colorOff    = opts.color_off || '#ef4444';
   const colorOn     = opts.color_on  || variable.color || '#22c55e';
   const isPressMode = mode === 'momentary_on' || mode === 'momentary_off';
-  // Se não tem mode configurado (bitmap puro), é somente leitura
   const isReadOnly  = !mode;
 
   // Clique para modos não-pulsadores
   const handleClick = async () => {
-    if (isReadOnly) return; // Bitmap read-only: não faz nada ao clicar
+    if (isReadOnly) return;
     let newVal;
-    if      (mode === 'toggle') newVal = !localActive;
+    if      (mode === 'toggle') newVal = !displayActive;
     else if (mode === 'set')    newVal = true;
     else if (mode === 'reset')  newVal = false;
     else return;
 
-    setLocalActive(newVal);
+    setPendingVal(newVal);
     setIsPending(true);
-    pendingRef.current = true;
+
     await onWrite(variable, newVal);
-    setTimeout(() => { pendingRef.current = false; setIsPending(false); }, 2000);
+
+    setTimeout(() => {
+      setIsPending(false);
+      setPendingVal(null);
+    }, 1500);
   };
 
-  // Pressionar (início de pulso para pulsadores)
+  // Pressionar (início de pulso)
   const handleDown = async () => {
     if (isReadOnly) return;
     const newVal = mode === 'momentary_on';
-    setLocalActive(newVal);
-    pendingRef.current = true;
+    setPendingVal(newVal);
+    setIsPending(true);
     await onWrite(variable, newVal);
   };
 
-  // Soltar (fim de pulso para pulsadores)
+  // Soltar (fim de pulso)
   const handleUp = async () => {
     if (isReadOnly) return;
     const newVal = mode === 'momentary_off';
-    setLocalActive(!newVal);
-    pendingRef.current = true;
+    setPendingVal(newVal);
     await onWrite(variable, newVal);
-    setTimeout(() => { pendingRef.current = false; }, 2000);
+    setTimeout(() => {
+      setIsPending(false);
+      setPendingVal(null);
+    }, 1500);
   };
 
-  const activeColor = localActive ? colorOn  : colorOff;
-  const activeText  = localActive ? labelOn  : labelOff;
-  // Cursor: wait durante pendência, default para read-only, pointer para interativo
+  const activeColor = displayActive ? colorOn : colorOff;
+  const activeText  = displayActive ? labelOn : labelOff;
   const cursorStyle = isPending ? 'wait' : (isReadOnly ? 'default' : 'pointer');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-      {/* Badge pill — clicável se mode configurado, read-only se bitmap puro */}
       <div
         role={isReadOnly ? undefined : 'button'}
         tabIndex={isReadOnly ? undefined : 0}
@@ -224,9 +200,9 @@ function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
           fontSize: '1.1rem', fontWeight: 'bold',
           border: `2px solid ${activeColor}`,
           color: activeColor,
-          background: localActive ? `${activeColor}15` : 'var(--bg-subcard)',
+          background: displayActive ? `${activeColor}15` : 'var(--bg-subcard)',
           display: 'flex', alignItems: 'center', gap: '0.5rem',
-          boxShadow: localActive ? `0 0 15px ${activeColor}40` : 'none',
+          boxShadow: displayActive ? `0 0 15px ${activeColor}40` : 'none',
           cursor: cursorStyle,
           transition: 'all 0.15s ease',
           userSelect: 'none',
@@ -234,19 +210,16 @@ function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
           outline: 'none'
         }}
       >
-        {/* LED indicador circular */}
         <div style={{
           width: '10px', height: '10px', borderRadius: '50%',
           background: activeColor,
-          boxShadow: localActive ? `0 0 10px ${activeColor}` : 'none',
+          boxShadow: displayActive ? `0 0 10px ${activeColor}` : 'none',
           transition: 'all 0.15s ease'
         }} />
         {activeText}
-        {/* Spinner de escrita pendente */}
         {isPending && <span style={{ fontSize: '0.65rem', opacity: 0.7 }}>⟳</span>}
       </div>
 
-      {/* Informações de modo e mapeamento de bit */}
       {!isReadOnly && (
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem', textAlign: 'center' }}>
           {mode === 'toggle'       ? 'Toggle'        :
@@ -257,7 +230,6 @@ function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
           {(variable.modbus_type === 'holding' || variable.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
         </div>
       )}
-      {/* Indicação de bit mapeado para modo read-only (bitmap) */}
       {isReadOnly && (variable.modbus_type === 'holding' || variable.modbus_type === 'input') && opts.bit_index >= 0 && (
         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
           Mapeado: Bit #{opts.bit_index} da Word
