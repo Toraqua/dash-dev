@@ -1020,18 +1020,57 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                       )}
 
                       {/* 10. VARIABLE LIST */}
-                      {v.widget_type === 'variable_list' && (
-                        <div style={{ width: '100%', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', justifyContent: 'center' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '0.4rem 0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
-                            <span>PV Atual</span>
-                            <strong style={{ color: v.color || '#3b82f6' }}>{val} {v.unit}</strong>
+                      {v.widget_type === 'variable_list' && (() => {
+                        const items = (opts.variable_items && opts.variable_items.length > 0) ? opts.variable_items : [];
+
+                        return (
+                          <div style={{ width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', padding: '0.2rem 0.4rem' }}>
+                            {items.map((item, idx) => {
+                              let isBitActive = false;
+                              const targetV = variables.find(varObj => varObj.id === item.variable_id);
+                              let varName = item.name;
+                              if (!varName && targetV) varName = targetV.display_name;
+                              if (!varName) varName = `Variável ${idx}`;
+                              
+                              if (targetV && plcState && plcState[targetV.name] !== undefined) {
+                                const rawTargetVal = plcState[targetV.name];
+                                if (targetV.type === 'boolean' || targetV.modbus_type === 'coil' || targetV.modbus_type === 'discrete') {
+                                  isBitActive = Boolean(rawTargetVal);
+                                } else {
+                                  isBitActive = Boolean(rawTargetVal > 0);
+                                }
+                              }
+
+                              const activeLabel = isBitActive ? (item.label_on || 'LIGADO') : (item.label_off || 'DESLIGADO');
+                              const activeColor = isBitActive ? (item.color_on || v.color || '#10b981') : (item.color_off || 'var(--text-secondary)');
+                              const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
+                              const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
+
+                              return (
+                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.5rem', borderBottom: '1px solid rgba(255, 255, 255, 0.04)', fontSize: '0.85rem' }}>
+                                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{varName}</span>
+                                  <span style={{
+                                    background: bgPill,
+                                    border: borderPill,
+                                    color: activeColor,
+                                    padding: '0.25rem 0.85rem',
+                                    borderRadius: '16px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: isBitActive ? 600 : 400,
+                                    boxShadow: isBitActive ? `0 0 10px ${activeColor}30` : 'none',
+                                    transition: 'all 0.3s ease'
+                                  }}>
+                                    {activeLabel}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                            {items.length === 0 && (
+                              <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>Nenhuma variável configurada nesta lista.</div>
+                            )}
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '0.4rem 0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
-                            <span>Modbus Endereço</span>
-                            <span style={{ color: 'var(--text-secondary)' }}>{v.modbus_type} #{v.modbus_address}</span>
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })()}
 
                       {/* 10.1 LISTA MULTIBIT */}
                       {v.widget_type === 'multibit_list' && (() => {

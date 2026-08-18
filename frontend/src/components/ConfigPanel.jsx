@@ -1135,6 +1135,71 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                   </div>
                 );
               })()}
+
+              {newVar.widget_type === 'variable_list' && (() => {
+                const currentItems = newVar.options?.variable_items || [];
+
+                const handleItemChange = (idx, field, val) => {
+                  const updated = [...currentItems];
+                  updated[idx] = { ...updated[idx], [field]: val };
+                  setNewVar({
+                    ...newVar,
+                    options: { ...(newVar.options || {}), variable_items: updated }
+                  });
+                };
+
+                const handleAddItem = () => {
+                  const updated = [...currentItems, { variable_id: '', name: '', label_off: 'NORMAL', label_on: 'ALERTA', color_on: '#ef4444' }];
+                  setNewVar({
+                    ...newVar,
+                    options: { ...(newVar.options || {}), variable_items: updated }
+                  });
+                };
+
+                const handleRemoveItem = (idx) => {
+                  const updated = currentItems.filter((_, i) => i !== idx);
+                  setNewVar({
+                    ...newVar,
+                    options: { ...(newVar.options || {}), variable_items: updated }
+                  });
+                };
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Mapeamento de Variáveis na Lista</span>
+                      <button className="btn" style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', background: 'rgba(59, 130, 246, 0.15)', color: 'var(--color-primary)' }} onClick={handleAddItem}>
+                        <Plus size={14} /> Adicionar Variável
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {currentItems.map((item, idx) => (
+                        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr 40px auto', gap: '0.5rem', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '6px' }}>
+                          <select className="form-input" style={{ fontSize: '0.8rem', padding: '0.2rem 0.4rem' }} value={item.variable_id || ''} onChange={e => handleItemChange(idx, 'variable_id', parseInt(e.target.value))}>
+                            <option value="">Selecione a variável...</option>
+                            {variables.map(v => (
+                              <option key={v.id} value={v.id}>{v.display_name} ({v.name})</option>
+                            ))}
+                          </select>
+                          <input type="text" className="form-input" style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} placeholder="Nome customizado" value={item.name} onChange={e => handleItemChange(idx, 'name', e.target.value)} />
+                          <input type="text" className="form-input" style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} placeholder="Status p/ 0" value={item.label_off} onChange={e => handleItemChange(idx, 'label_off', e.target.value)} />
+                          <input type="text" className="form-input" style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }} placeholder="Status p/ 1" value={item.label_on} onChange={e => handleItemChange(idx, 'label_on', e.target.value)} />
+                          <input type="color" style={{ width: '100%', height: '30px', padding: '0 2px', background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: '4px' }} value={item.color_on || '#ef4444'} onChange={e => handleItemChange(idx, 'color_on', e.target.value)} />
+                          <button className="btn" style={{ padding: '0.25rem 0.5rem', background: 'rgba(239, 68, 68, 0.2)', color: 'var(--color-danger)' }} onClick={() => handleRemoveItem(idx)}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                      {currentItems.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                          Nenhuma variável configurada para exibir na lista.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
