@@ -623,11 +623,57 @@ class PLCService extends EventEmitter {
         updateState(Boolean((newWord >> bitIdx) & 1));
 
       } else {
-        // Modo escrita de word inteira (valor analógico com escala de decimais)
-        // Ex: valor 12.5 com decimals=1 → escreve 125 no registrador
-        const rawValue = Math.round(Number(value) * Math.pow(10, decimals || 0));
-        console.log(`[Modbus Write] writeRegister(addr=${wireAddr}, raw=${rawValue}) val=${value}`);
-        await dev.client.writeRegister(wireAddr, rawValue);
+        // Modo escrita de word inteira ou float (analógico com escala de decimais)
+        
+        // 1. Descobrir o formato da variável (se existir)
+        let dataFormat = '16_int';
+        let endianness = 'ABCD';
+        if (var_name) {
+          const vars = dev.variables || [];
+          const found = vars.find(v => v.name === var_name);
+          if (found) {
+            if (found.data_format) dataFormat = found.data_format;
+            if (found.endianness) endianness = found.endianness;
+          }
+        }
+
+        const is32Bit = String(dataFormat).startsWith('32');
+        const isFloat = dataFormat === '32_float';
+        
+        let words = [];
+
+        if (is32Bit) {
+          const valToWrite = isFloat ? Number(value) : Math.round(Number(value) * Math.pow(10, decimals || 0));
+          const buf = Buffer.alloc(4);
+          
+          if (isFloat) buf.writeFloatBE(valToWrite, 0);
+          else if (dataFormat === '32_int') buf.writeInt32BE(valToWrite, 0);
+          else buf.writeUInt32BE(valToWrite, 0);
+
+          let A = buf[0], B = buf[1], C = buf[2], D = buf[3];
+          let finalBytes;
+          switch (endianness) {
+            case 'BADC': finalBytes = [B, A, D, C]; break;
+            case 'DCBA': finalBytes = [D, C, B, A]; break;
+            case 'CDAB': finalBytes = [C, D, A, B]; break;
+            case 'ABCD':
+            default:     finalBytes = [A, B, C, D]; break;
+          }
+          const w1 = (finalBytes[0] << 8) | finalBytes[1];
+          const w2 = (finalBytes[2] << 8) | finalBytes[3];
+          words = [w1, w2];
+          
+          console.log(`[Modbus Write] writeRegisters(addr=${wireAddr}, words=[${words.join(', ')}]) val=${value} fmt=${dataFormat}`);
+          // FC16 - Write Multiple Registers
+          await dev.client.writeRegisters(wireAddr, words);
+        } else {
+          // Fallback seguro de 16 bits (mantendo a compatibilidade estrita do FC06)
+          const rawValue = Math.round(Number(value) * Math.pow(10, decimals || 0));
+          console.log(`[Modbus Write] writeRegister(addr=${wireAddr}, raw=${rawValue}) val=${value} fmt=${dataFormat}`);
+          // FC06 - Write Single Register
+          await dev.client.writeRegister(wireAddr, rawValue);
+        }
+
         updateState(Number(value));
       }
     } else {
