@@ -9,6 +9,7 @@ const plc = require('./plc');
 const gatewayService = require('./gateway');
 
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -294,11 +295,12 @@ app.post('/api/settings/lighting', (req, res) => {
 app.get('/api/settings/general', (req, res) => {
   db.get(`SELECT value FROM system_settings WHERE key = 'general_config'`, [], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.json({ system_name: 'KRONOX OS', system_logo: '/kronox_logo.png', sidebar_display: 'image', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15 });
+    const def = { system_name: 'KRONOX OS', system_logo: '/kronox_logo.png', sidebar_display: 'image', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15, auto_cleanup_enabled: false, auto_cleanup_value: 90, auto_cleanup_unit: 'days' };
+    if (!row) return res.json(def);
     try {
-      res.json(JSON.parse(row.value));
+      res.json({ ...def, ...JSON.parse(row.value) });
     } catch(e) {
-      res.json({ system_name: 'KRONOX OS', system_logo: '/kronox_logo.png', sidebar_display: 'image', dashboard_title: 'Visão Geral da Estação', timezone: 'America/Sao_Paulo', history_interval_seconds: 15 });
+      res.json(def);
     }
   });
 });
@@ -884,6 +886,119 @@ app.post('/api/gateway/ping', async (req, res) => {
     res.json(result);
   } catch(e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// --- APIs e Rotinas de Limpeza de Banco de Dados ---
+async function runAutoCleanup() {
+  try {
+    const dbPath = path.resolve(__dirname, 'kronox.sqlite');
+    let freeBytes = Infinity;
+    
+    // Tentativa de obter espaço livre (somente Node 18+ em Linux/Windows)
+    try {
+      if (fs.promises && fs.promises.statfs) {
+        const stat = await fs.promises.statfs(dbPath);
+        freeBytes = stat.bavail * stat.bsize;
+      }
+    } catch (e) {
+      console.warn("[Limpeza] Aviso: não foi possível checar o espaço em disco nativamente.");
+    }
+    
+    const freeMB = freeBytes / (1024 * 1024);
+    
+    let isEmergency = false;
+    let cutoffStr = null;
+
+    if (freeMB < 300) {
+      console.log(`[EMERGÊNCIA] Espaço livre crítico (${freeMB.toFixed(2)} MB). Iniciando expurgo emergencial dos 6 meses mais velhos.`);
+      isEmergency = true;
+      
+      const oldestVar = await new Promise(res => db.get('SELECT MIN(timestamp) as min_ts FROM variable_history', [], (err, row) => res(row?.min_ts)));
+      if (oldestVar) {
+        cutoffStr = `datetime('${oldestVar}', '+6 months')`;
+      } else {
+        console.log("[Limpeza] Banco vazio, abortando emergência.");
+        return { deleted: 0, emergency: true };
+      }
+    } else {
+      const configStr = await new Promise(res => db.get("SELECT value FROM system_settings WHERE key = 'general_config'", [], (err, row) => res(row?.value)));
+      if (!configStr) return { deleted: 0, emergency: false };
+      
+      let config = {};
+      try { config = JSON.parse(configStr); } catch(e) {}
+      
+      if (!config.auto_cleanup_enabled) return { deleted: 0, emergency: false };
+      
+      const val = parseInt(config.auto_cleanup_value) || 90;
+      const unit = config.auto_cleanup_unit || 'days';
+      cutoffStr = `datetime('now', 'localtime', '-${val} ${unit}')`;
+      console.log(`[Limpeza] Iniciando expurgo automático programado. Corte: ${val} ${unit}.`);
+    }
+
+    const tables = ['variable_history', 'alarm_history', 'audit_logs', 'gateway_audit_logs'];
+    let totalDeleted = 0;
+    
+    const deleteBatch = (table) => {
+      return new Promise((resolve) => {
+        let deletedThisTable = 0;
+        
+        const loopDelete = () => {
+          let timeCol = 'timestamp';
+          if (table === 'alarm_history') timeCol = 'trigger_time';
+          
+          db.run(`DELETE FROM ${table} WHERE id IN (
+            SELECT id FROM ${table} WHERE ${timeCol} < ${cutoffStr} ORDER BY ${timeCol} ASC LIMIT 5000
+          )`, function(err) {
+            if (err) {
+              console.error(`Erro ao limpar ${table}: ${err.message}`);
+              return resolve(deletedThisTable);
+            }
+            if (this.changes > 0) {
+              deletedThisTable += this.changes;
+              setTimeout(loopDelete, 100); // yield event loop to prevent blocking
+            } else {
+              resolve(deletedThisTable);
+            }
+          });
+        };
+        loopDelete();
+      });
+    };
+
+    for (const tbl of tables) {
+      const c = await deleteBatch(tbl);
+      totalDeleted += c;
+    }
+
+    if (totalDeleted > 0) {
+      console.log(`[Limpeza] Concluída. Total de ${totalDeleted} registros removidos. Vácuo em andamento...`);
+      db.run('VACUUM');
+      logAudit('Sistema', 'LIMPEZA_BANCO', 'Auto Cleanup', '', `Registros apagados: ${totalDeleted} (Emergência: ${isEmergency})`, 'SUCESSO');
+    }
+    
+    return { deleted: totalDeleted, emergency: isEmergency };
+  } catch (error) {
+    console.error(`[Limpeza] Falha crítica durante rotina de limpeza: ${error.message}`);
+    return { error: error.message };
+  }
+}
+
+// Iniciar cron a cada 24 horas
+setInterval(runAutoCleanup, 24 * 60 * 60 * 1000);
+// Tentar uma vez ao ligar o server, após 15 segundos para não atrasar o boot
+setTimeout(runAutoCleanup, 15000);
+
+app.post('/api/settings/cleanup-now', async (req, res) => {
+  const user = req.body.currentUser || { username: 'Admin' };
+  try {
+    const result = await runAutoCleanup();
+    if (result.error) throw new Error(result.error);
+    logAudit(user.username, 'LIMPEZA_MANUAL', 'Banco de Dados', '', `Registros apagados: ${result.deleted}`, 'SUCESSO');
+    res.json({ success: true, deleted: result.deleted, emergency: result.emergency });
+  } catch (err) {
+    logAudit(user.username, 'LIMPEZA_MANUAL', 'Banco de Dados', '', `Erro: ${err.message}`, 'FALHA');
+    res.status(500).json({ error: err.message });
   }
 });
 

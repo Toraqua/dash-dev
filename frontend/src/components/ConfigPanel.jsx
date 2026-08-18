@@ -86,7 +86,10 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     sidebar_display: (generalConfig && generalConfig.sidebar_display) || 'image',
     dashboard_title: (generalConfig && generalConfig.dashboard_title) || 'Visão Geral da Estação',
     timezone: (generalConfig && generalConfig.timezone) || 'America/Sao_Paulo',
-    history_interval_seconds: (generalConfig && generalConfig.history_interval_seconds) !== undefined ? generalConfig.history_interval_seconds : 15
+    history_interval_seconds: (generalConfig && generalConfig.history_interval_seconds) !== undefined ? generalConfig.history_interval_seconds : 15,
+    auto_cleanup_enabled: (generalConfig && generalConfig.auto_cleanup_enabled) || false,
+    auto_cleanup_value: (generalConfig && generalConfig.auto_cleanup_value) !== undefined ? generalConfig.auto_cleanup_value : 90,
+    auto_cleanup_unit: (generalConfig && generalConfig.auto_cleanup_unit) || 'days'
   });
 
   useEffect(() => {
@@ -97,7 +100,10 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
         sidebar_display: generalConfig.sidebar_display || 'image',
         dashboard_title: generalConfig.dashboard_title || 'Visão Geral da Estação',
         timezone: generalConfig.timezone || 'America/Sao_Paulo',
-        history_interval_seconds: generalConfig.history_interval_seconds !== undefined ? generalConfig.history_interval_seconds : 15
+        history_interval_seconds: generalConfig.history_interval_seconds !== undefined ? generalConfig.history_interval_seconds : 15,
+        auto_cleanup_enabled: generalConfig.auto_cleanup_enabled || false,
+        auto_cleanup_value: generalConfig.auto_cleanup_value !== undefined ? generalConfig.auto_cleanup_value : 90,
+        auto_cleanup_unit: generalConfig.auto_cleanup_unit || 'days'
       });
     }
   }, [generalConfig]);
@@ -330,6 +336,27 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     } catch (e) {
       console.error(e);
       showNotification('Erro ao salvar configurações gerais', 'error');
+    }
+  };
+
+  const handleCleanupNow = async () => {
+    if (!confirm('Deseja realmente iniciar a limpeza manual agora? Este processo apagará registros históricos antigos conforme as regras configuradas e não pode ser desfeito.')) return;
+    try {
+      showNotification('Iniciando limpeza manual, isso pode demorar alguns instantes...', 'info');
+      const res = await fetch(getBaseUrl() + '/api/settings/cleanup-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentUser: { username: 'Admin' } })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotification(`Limpeza concluída com sucesso! ${data.deleted} registros foram removidos.${data.emergency ? ' (Aviso: Modo de Emergência de Disco Ativado)' : ''}`, 'success');
+      } else {
+        showNotification(`Erro ao limpar banco: ${data.error}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showNotification('Erro ao conectar ao servidor para limpeza.', 'error');
     }
   };
 
@@ -1416,6 +1443,73 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>
                 Frequência com que cada variável é gravada continuamente no banco de dados (padrão: 15 segundos).
               </span>
+            </div>
+
+            <div style={{ marginTop: '2rem', padding: '1.5rem', background: 'rgba(0,0,0,0.15)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                <Trash2 size={24} color="#ef4444" />
+                <h4 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-primary)' }}>Limpeza Automática do Banco (Retenção)</h4>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+                Ative esta opção para apagar automaticamente dados históricos antigos e economizar espaço em disco.
+                <br />
+                <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.5rem' }}>
+                  <Info size={14} /> <b>Segurança Automática:</b> Independente desta configuração, se o disco do sistema atingir nível crítico (abaixo de 300MB livres), os 6 meses mais antigos de dados serão sumariamente apagados para evitar o travamento geral do equipamento.
+                </span>
+              </p>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setGenConfig({ ...genConfig, auto_cleanup_enabled: !genConfig.auto_cleanup_enabled })}
+                  style={{
+                    position: 'relative', width: '48px', height: '24px', borderRadius: '12px', cursor: 'pointer',
+                    background: genConfig?.auto_cleanup_enabled ? '#10b981' : 'rgba(255,255,255,0.1)', border: 'none', transition: '0.3s'
+                  }}
+                >
+                  <div style={{
+                    position: 'absolute', top: '2px', left: genConfig?.auto_cleanup_enabled ? '26px' : '2px',
+                    width: '20px', height: '20px', borderRadius: '50%', background: 'white', transition: '0.3s'
+                  }} />
+                </button>
+                <span style={{ fontWeight: 600, color: genConfig?.auto_cleanup_enabled ? '#10b981' : 'var(--text-secondary)' }}>
+                  {genConfig?.auto_cleanup_enabled ? 'Habilitada (Diariamente)' : 'Desativada'}
+                </span>
+              </div>
+
+              {genConfig?.auto_cleanup_enabled && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div style={{ flex: '1', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Apagar dados mais antigos que:</label>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <input
+                        type="number"
+                        min="1"
+                        className="form-input"
+                        style={{ width: '100px' }}
+                        value={genConfig?.auto_cleanup_value || ''}
+                        onChange={e => setGenConfig({ ...genConfig, auto_cleanup_value: parseInt(e.target.value) || 1 })}
+                      />
+                      <select
+                        className="form-input"
+                        style={{ width: '150px' }}
+                        value={genConfig?.auto_cleanup_unit || 'days'}
+                        onChange={e => setGenConfig({ ...genConfig, auto_cleanup_unit: e.target.value })}
+                      >
+                        <option value="days">Dia(s)</option>
+                        <option value="months">Mês(es)</option>
+                        <option value="years">Ano(s)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem' }}>
+                <button type="button" className="btn" style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }} onClick={handleCleanupNow}>
+                  <RefreshCw size={16} /> Executar Limpeza Manual Agora
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
