@@ -396,7 +396,7 @@ class PLCService extends EventEmitter {
 
           } else if (v.type === 'analog') {
             // Variável analógica: aplica escala e offset configurados
-            let val = typeof rawValue === 'number' ? rawValue : 0;
+            let val = typeof rawValue === 'number' ? rawValue : (typeof rawValue === 'boolean' ? (rawValue ? 1 : 0) : 0);
 
             // Fator de escala: multiplica o valor bruto (ex: 1000 raw → 10.0 com scale=0.01)
             if (opts.scale !== undefined && opts.scale !== null && opts.scale !== '' &&
