@@ -958,7 +958,9 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
               {(newVar.widget_type === 'switch' || newVar.widget_type === 'bitmap' || newVar.widget_type === 'bit_button') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {newVar.widget_type === 'bit_button' && (
+                  {/* Seletor de modo de operação — disponível para switch e bit_button */}
+                  {/* bitmap é sempre read-only, portanto não exibe este seletor */}
+                  {(newVar.widget_type === 'bit_button' || newVar.widget_type === 'switch') && (
                     <div className="form-group" style={{ marginBottom: 0 }}>
                       <label className="form-label">Modo de Funcionamento do Botão</label>
                       <select
