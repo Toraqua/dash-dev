@@ -330,14 +330,13 @@ class PLCService extends EventEmitter {
       // FASE 1: Agrupar variáveis por tipo e construir blocos de leitura
       //
       // Em vez de fazer 1 requisição TCP por variável, agrupamos endereços
-      // consecutivos (ou próximos) num único request FC03/FC01.
-      // Ex: 20 holding registers → 1 bloco → 1 request TCP em vez de 20.
+      // estritamente consecutivos num único request FC03/FC01/FC04.
       //
-      // MAX_GAP: endereços com gap <= MAX_GAP são fundidos no mesmo bloco.
-      // Isso evita gerar blocos enormes por causa de poucos gaps pequenos.
+      // MAX_GAP = 0: lê apenas registros estritamente contínuos. Isso evita
+      // tentar ler endereços não mapeados na memória do CLP que geram Timeout!
       // -----------------------------------------------------------------------
-      const MAX_GAP    = 5;   // gap máximo entre variáveis para fundir em bloco
-      const MAX_BLOCK  = 120; // limite de registers por request (FC03 suporta até 125)
+      const MAX_GAP    = 0;   // apenas registros contínuos (sem buracos não mapeados)
+      const MAX_BLOCK  = 120; // limite de registros por bloco
 
       const buildBlocks = (vars, getNumRegs) => {
         if (!vars.length) return [];
@@ -389,38 +388,79 @@ class PLCService extends EventEmitter {
       const discreteBlocks = buildBlocks(discreteVars, () => 1);
 
       // -----------------------------------------------------------------------
-      // FASE 2: Executar leituras em bloco (sequenciais para respeitar TCP único)
-      //
-      // Cada bloco = 1 requisição Modbus para N registros consecutivos.
-      // O total de requisições TCP agora é igual ao número de blocos, não de variáveis.
+      // FASE 2: Executar leituras em bloco com Fallback Individual inteligente
       // -----------------------------------------------------------------------
       const blockData = new Map(); // key: `${type}:${startAddr}` → array de dados
+      const individualData = new Map(); // key: `${type}:${addr}` → array de dados
 
-      const readBlock = async (type, start, count, readFn) => {
+      let successfulReadsThisCycle = 0;
+
+      const readBlock = async (type, block, readFn) => {
+        const count = block.end - block.start;
         try {
-          const res = await readFn(start, count);
-          if (res && res.data) blockData.set(`${type}:${start}`, res.data);
+          const res = await readFn(block.start, count);
+          if (res && res.data) {
+            blockData.set(`${type}:${block.start}`, res.data);
+            successfulReadsThisCycle += block.vars.length;
+          }
         } catch(e) {
-          console.warn(`[Modbus Warning] Falha ao ler bloco ${type}[${start}..${start+count-1}]: ${e.message}`);
+          console.warn(`[Modbus Warning] Bloco ${type}[${block.start}..${block.end-1}] falhou: ${e.message}. Tentando leitura individual de fallback...`);
+          
+          // Fallback: Tentar ler cada variável do bloco separadamente para isolar o endereço com problema
+          for (const v of block.vars) {
+            const addr = parseInt(v.modbus_address) || 0;
+            const nRegs = (type === 'holding' || type === 'input') ? getNumRegsForVar(v) : 1;
+            try {
+              const singleRes = await readFn(addr, nRegs);
+              if (singleRes && singleRes.data) {
+                individualData.set(`${type}:${addr}`, singleRes.data);
+                successfulReadsThisCycle++;
+              }
+            } catch(singleErr) {
+              console.warn(`[Modbus Warning] Variável '${v.name}' [${type}#${addr}] com falha individual: ${singleErr.message}`);
+            }
+          }
         }
       };
 
-      for (const b of holdingBlocks)  await readBlock('holding',  b.start, b.end - b.start, (a,c) => dev.client.readHoldingRegisters(a, c));
-      for (const b of inputBlocks)    await readBlock('input',    b.start, b.end - b.start, (a,c) => dev.client.readInputRegisters(a, c));
-      for (const b of coilBlocks)     await readBlock('coil',     b.start, b.end - b.start, (a,c) => dev.client.readCoils(a, c));
-      for (const b of discreteBlocks) await readBlock('discrete', b.start, b.end - b.start, (a,c) => dev.client.readDiscreteInputs(a, c));
+      for (const b of holdingBlocks)  await readBlock('holding',  b, (a,c) => dev.client.readHoldingRegisters(a, c));
+      for (const b of inputBlocks)    await readBlock('input',    b, (a,c) => dev.client.readInputRegisters(a, c));
+      for (const b of coilBlocks)     await readBlock('coil',     b, (a,c) => dev.client.readCoils(a, c));
+      for (const b of discreteBlocks) await readBlock('discrete', b, (a,c) => dev.client.readDiscreteInputs(a, c));
 
       // -----------------------------------------------------------------------
-      // FASE 3: Extrair valores de cada variável a partir dos blocos lidos
+      // Gerenciar a saúde de conexão real do dispositivo (Online vs Offline)
       // -----------------------------------------------------------------------
-      const getFromBlock = (typeKey, blocks, addr, nRegs) => {
+      if (dev.variables.length > 0) {
+        if (successfulReadsThisCycle === 0) {
+          dev.failedPolls = (dev.failedPolls || 0) + 1;
+          if (dev.failedPolls >= 2 && dev.connected) {
+            console.warn(`[Modbus] Dispositivo ID ${deviceId} desconectado (marcado Offline) devido a falhas consecutivas de comunicação.`);
+            dev.connected = false;
+          }
+        } else {
+          dev.failedPolls = 0;
+          dev.connected = true;
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // FASE 3: Extrair valores de cada variável a partir dos blocos ou do fallback
+      // -----------------------------------------------------------------------
+      const getFromBlockOrIndividual = (typeKey, blocks, addr, nRegs) => {
+        // Tentar primeiro do bloco agrupado
         for (const b of blocks) {
           if (addr >= b.start && (addr + nRegs) <= b.end) {
             const data = blockData.get(`${typeKey}:${b.start}`);
-            if (!data) return null;
-            const offset = addr - b.start;
-            return data.slice(offset, offset + nRegs);
+            if (data) {
+              const offset = addr - b.start;
+              return data.slice(offset, offset + nRegs);
+            }
           }
+        }
+        // Tentar do fallback individual
+        if (individualData.has(`${typeKey}:${addr}`)) {
+          return individualData.get(`${typeKey}:${addr}`);
         }
         return null;
       };
@@ -437,15 +477,15 @@ class PLCService extends EventEmitter {
         let readSuccess = false;
 
         if (mType === 'holding' || mType === 'holdingregister') {
-          const slice = getFromBlock('holding', holdingBlocks, wireAddr, numRegisters);
+          const slice = getFromBlockOrIndividual('holding', holdingBlocks, wireAddr, numRegisters);
           if (slice) { rawValue = parseModbusValue(slice, dataFormat, endianness); readSuccess = true; }
 
         } else if (mType === 'input' || mType === 'inputregister') {
-          const slice = getFromBlock('input', inputBlocks, wireAddr, numRegisters);
+          const slice = getFromBlockOrIndividual('input', inputBlocks, wireAddr, numRegisters);
           if (slice) { rawValue = parseModbusValue(slice, dataFormat, endianness); readSuccess = true; }
 
         } else if (mType === 'coil') {
-          const slice = getFromBlock('coil', coilBlocks, wireAddr, 1);
+          const slice = getFromBlockOrIndividual('coil', coilBlocks, wireAddr, 1);
           if (slice) {
             rawValue = slice[0];
             readSuccess = true;
@@ -456,7 +496,7 @@ class PLCService extends EventEmitter {
           }
 
         } else if (mType === 'discrete' || mType === 'inputstatus') {
-          const slice = getFromBlock('discrete', discreteBlocks, wireAddr, 1);
+          const slice = getFromBlockOrIndividual('discrete', discreteBlocks, wireAddr, 1);
           if (slice) { rawValue = slice[0]; readSuccess = true; }
         }
 
