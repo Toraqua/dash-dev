@@ -4,6 +4,15 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
+// Prevenir queda do processo Node por erros de conexão TCP/Promise Rejection (ex: CLP offline)
+process.on('unhandledRejection', (reason) => {
+  console.warn('[System] Unhandled Rejection capturada (processo mantido rodando):', reason?.message || reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[System] Uncaught Exception capturada (processo mantido rodando):', err?.message || err);
+});
+
 const db = require('./db');
 const plc = require('./plc');
 const gatewayService = require('./gateway');

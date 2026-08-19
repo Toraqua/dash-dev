@@ -223,7 +223,10 @@ class PLCService extends EventEmitter {
     if (!dev) return;
 
     // Fechar client anterior antes de criar novo (evita leak de conexões TCP)
-    try { if (dev.client) dev.client.close(); } catch(e) {}
+    if (dev.client) {
+      try { dev.client.close(() => {}); } catch(e) {}
+      dev.client = null;
+    }
 
     console.log(`[Modbus] Conectando ao dispositivo ID ${deviceId} (${dev.info.ip_address}:${dev.info.port})...`);
 
@@ -233,15 +236,15 @@ class PLCService extends EventEmitter {
 
     // Tratar erros no nível do socket TCP (desconexão inesperada, etc.)
     client.on('error', (err) => {
-      console.error(`[Modbus] Erro de socket no dispositivo ID ${deviceId}: ${err.message}`);
+      console.warn(`[Modbus] Aviso de socket no dispositivo ID ${deviceId}: ${err?.message || err}`);
     });
 
     dev.client = client;
 
-    dev.client.connectTCP(dev.info.ip_address, { port: dev.info.port })
+    client.connectTCP(dev.info.ip_address, { port: dev.info.port })
       .then(() => {
         console.log(`[Modbus] Dispositivo ID ${deviceId} conectado com sucesso.`);
-        // ID da unidade Modbus (padrão: 1 — ajustar se o CLP usar ID diferente)
+        // ID da unidade Modbus (padrão: 1)
         dev.client.setID(1);
         dev.connected  = true;
         dev.retryCount = 0; // Resetar backoff após conexão bem-sucedida
@@ -251,8 +254,10 @@ class PLCService extends EventEmitter {
         this.pollDevice(deviceId);
       })
       .catch(e => {
-        console.error(`[Modbus] Falha ao conectar ID ${deviceId}: ${e.message}`);
+        console.warn(`[Modbus] Falha ao conectar ID ${deviceId}: ${e?.message || e}`);
         dev.connected = false;
+
+        try { client.close(() => {}); } catch(_) {}
 
         // Calcular delay com backoff exponencial, limitado a 30 segundos
         const delay = Math.min(5000 * Math.pow(2, dev.retryCount || 0), 30000);
