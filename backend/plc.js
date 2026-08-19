@@ -227,9 +227,9 @@ class PLCService extends EventEmitter {
 
     console.log(`[Modbus] Conectando ao dispositivo ID ${deviceId} (${dev.info.ip_address}:${dev.info.port})...`);
 
-    // Criar novo client Modbus TCP com timeout de 2 segundos por transação
+    // Criar novo client Modbus TCP com timeout de 1.5 segundos por transação
     const client = new ModbusRTU();
-    client.setTimeout(2000);
+    client.setTimeout(1500);
 
     // Tratar erros no nível do socket TCP (desconexão inesperada, etc.)
     client.on('error', (err) => {
@@ -451,32 +451,51 @@ class PLCService extends EventEmitter {
       // -----------------------------------------------------------------------
       // Processamento de Alarmes em Memória (alta performance — sem I/O por alarme)
       // Reutiliza o valor já lido das variáveis através de this.state para
-      // evitar duplicar requisições Modbus.
+      // evitar duplicar requisições Modbus (era a causa da sobreposição de poll).
       // -----------------------------------------------------------------------
       if (dev.alarms && dev.alarms.length > 0) {
         for (const alarm of dev.alarms) {
+          // Buscar o valor já lido da variável correspondente no estado global
+          // Procura primeiro pelo nome técnico da variável vinculada ao alarme
           let rawAlarmVal;
-          const aType        = String(alarm.modbus_type || '').toLowerCase();
-          const wireAlarmAddr = Math.max(0, parseInt(alarm.modbus_address) || 0);
 
-          try {
-            // Ler o valor atual do endereço do alarme via Modbus
-            if (aType === 'holding' || aType === 'holdingregister') {
-              const res  = await dev.client.readHoldingRegisters(wireAlarmAddr, 1);
-              rawAlarmVal = (res && res.data) ? res.data[0] : undefined;
-            } else if (aType === 'input' || aType === 'inputregister') {
-              const res  = await dev.client.readInputRegisters(wireAlarmAddr, 1);
-              rawAlarmVal = (res && res.data) ? res.data[0] : undefined;
-            } else if (aType === 'coil') {
-              const res  = await dev.client.readCoils(wireAlarmAddr, 1);
-              rawAlarmVal = (res && res.data) ? (res.data[0] ? 1 : 0) : undefined;
-            } else if (aType === 'discrete' || aType === 'inputstatus') {
-              const res  = await dev.client.readDiscreteInputs(wireAlarmAddr, 1);
-              rawAlarmVal = (res && res.data) ? (res.data[0] ? 1 : 0) : undefined;
+          // Tentar localizar a variável do alarme pelo device_id + endereço
+          const alarmVar = (dev.variables || []).find(v => {
+            const vType = String(v.modbus_type || '').toLowerCase();
+            const aType = String(alarm.modbus_type || '').toLowerCase();
+            return (
+              vType === aType &&
+              parseInt(v.modbus_address) === parseInt(alarm.modbus_address)
+            );
+          });
+
+          if (alarmVar && this.state[alarmVar.name] !== undefined) {
+            // Variável encontrada: usar valor já lido neste ciclo
+            rawAlarmVal = this.state[alarmVar.name];
+            // Para alarmes booleanos, converter para 0/1
+            if (typeof rawAlarmVal === 'boolean') rawAlarmVal = rawAlarmVal ? 1 : 0;
+          } else {
+            // Variável não cadastrada no dashboard: fazer leitura pontual
+            // (caso raro: alarme configurado em endereço não monitorado)
+            const aType = String(alarm.modbus_type || '').toLowerCase();
+            const wireAlarmAddr = Math.max(0, parseInt(alarm.modbus_address) || 0);
+            try {
+              if (aType === 'holding' || aType === 'holdingregister') {
+                const res = await dev.client.readHoldingRegisters(wireAlarmAddr, 1);
+                rawAlarmVal = (res && res.data) ? res.data[0] : undefined;
+              } else if (aType === 'input' || aType === 'inputregister') {
+                const res = await dev.client.readInputRegisters(wireAlarmAddr, 1);
+                rawAlarmVal = (res && res.data) ? res.data[0] : undefined;
+              } else if (aType === 'coil') {
+                const res = await dev.client.readCoils(wireAlarmAddr, 1);
+                rawAlarmVal = (res && res.data) ? (res.data[0] ? 1 : 0) : undefined;
+              } else if (aType === 'discrete' || aType === 'inputstatus') {
+                const res = await dev.client.readDiscreteInputs(wireAlarmAddr, 1);
+                rawAlarmVal = (res && res.data) ? (res.data[0] ? 1 : 0) : undefined;
+              }
+            } catch(errAlarm) {
+              rawAlarmVal = undefined;
             }
-          } catch(errAlarm) {
-            // Erro de leitura do alarme: ignorar e continuar com o próximo
-            rawAlarmVal = undefined;
           }
 
           if (rawAlarmVal === undefined) continue;
