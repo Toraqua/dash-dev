@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter } from 'recharts';
+import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter } from 'recharts';
 import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
 // =============================================================================
@@ -923,18 +923,43 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                       })()}
 
                       {/* 3. TIMESERIES / GRÁFICO SÉRIE TEMPORAL */}
-                      {(v.widget_type === 'graph' || v.widget_type === 'timeseries') && (
-                        <div style={{ width: '100%', height: '100%', minHeight: '100px' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={getFilteredGraphData(v.id)}>
-                              <XAxis dataKey="time" hide />
-                              <YAxis domain={['auto', 'auto']} hide />
-                              <Tooltip contentStyle={{ background: '#0b0f19', borderColor: 'var(--border-color)', borderRadius: '8px' }} />
-                              <Line type="monotone" dataKey="val" stroke={v.color || '#3b82f6'} strokeWidth={2} dot={false} isAnimationActive={false} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
+                      {(v.widget_type === 'graph' || v.widget_type === 'timeseries') && (() => {
+                        const chartColor = v.color || '#3b82f6';
+                        const gradientId = `areaGrad-modal-${v.id}`;
+                        const graphData = getFilteredGraphData(v.id);
+
+                        return (
+                          <div style={{ width: '100%', height: '100%', minHeight: '100px' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart data={graphData}>
+                                <defs>
+                                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor={chartColor} stopOpacity={0.35} />
+                                    <stop offset="95%" stopColor={chartColor} stopOpacity={0.0} />
+                                  </linearGradient>
+                                </defs>
+                                <XAxis dataKey="time" hide />
+                                <YAxis domain={['auto', 'auto']} hide />
+                                <Tooltip 
+                                  contentStyle={{ background: '#0b0f19', borderColor: 'rgba(255,255,255,0.1)', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }} 
+                                  itemStyle={{ color: chartColor }}
+                                />
+                                <Area 
+                                  type="monotone" 
+                                  dataKey="val" 
+                                  stroke={chartColor} 
+                                  strokeWidth={2.5} 
+                                  fillOpacity={1} 
+                                  fill={`url(#${gradientId})`}
+                                  isAnimationActive={true}
+                                  animationDuration={500}
+                                  animationEasing="ease-out"
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        );
+                      })()}
 
                       {/* 4. DONUT CHART */}
                       {v.widget_type === 'donut' && (
@@ -1447,18 +1472,43 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                   })()}
 
                   {/* 3. TIMESERIES / GRÁFICO SÉRIE TEMPORAL */}
-                  {(v.widget_type === 'graph' || v.widget_type === 'timeseries') && (
-                    <div style={{ width: '100%', height: '100%', minHeight: '100px' }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={getFilteredGraphData(v.id)}>
-                          <XAxis dataKey="time" hide />
-                          <YAxis domain={['auto', 'auto']} hide />
-                          <Tooltip contentStyle={{ background: '#0b0f19', borderColor: 'var(--border-color)', borderRadius: '8px' }} />
-                          <Line type="monotone" dataKey="val" stroke={v.color || '#3b82f6'} strokeWidth={2} dot={false} isAnimationActive={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
+                  {(v.widget_type === 'graph' || v.widget_type === 'timeseries') && (() => {
+                    const chartColor = v.color || '#3b82f6';
+                    const gradientId = `areaGrad-grid-${v.id}`;
+                    const graphData = getFilteredGraphData(v.id);
+
+                    return (
+                      <div style={{ width: '100%', height: '100%', minHeight: '100px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={graphData}>
+                            <defs>
+                              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={chartColor} stopOpacity={0.35} />
+                                <stop offset="95%" stopColor={chartColor} stopOpacity={0.0} />
+                              </linearGradient>
+                            </defs>
+                            <XAxis dataKey="time" hide />
+                            <YAxis domain={['auto', 'auto']} hide />
+                            <Tooltip 
+                              contentStyle={{ background: '#0b0f19', borderColor: 'rgba(255,255,255,0.1)', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)' }} 
+                              itemStyle={{ color: chartColor }}
+                            />
+                            <Area 
+                              type="monotone" 
+                              dataKey="val" 
+                              stroke={chartColor} 
+                              strokeWidth={2.5} 
+                              fillOpacity={1} 
+                              fill={`url(#${gradientId})`}
+                              isAnimationActive={true}
+                              animationDuration={500}
+                              animationEasing="ease-out"
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })()}
 
                   {/* 4. DONUT CHART */}
                   {v.widget_type === 'donut' && (
