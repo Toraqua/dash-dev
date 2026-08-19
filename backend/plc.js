@@ -307,8 +307,7 @@ class PLCService extends EventEmitter {
     const dev = this.devices[deviceId];
     if (!dev || !dev.connected) return;
 
-    // Guard: evita sobreposição de ciclos de poll se o anterior demorou mais
-    // que o intervalo configurado (ex: timeout de 2s em device com poll de 1s)
+    // Guard: evita sobreposição de ciclos de poll
     if (dev.isPolling) {
       console.warn(`[Modbus] Poll sobreposição evitada para dispositivo ID ${deviceId}`);
       return;
@@ -317,66 +316,146 @@ class PLCService extends EventEmitter {
 
     try {
       // -----------------------------------------------------------------------
-      // Leitura de variáveis configuradas
+      // Helper: parseia as opções JSON de uma variável
       // -----------------------------------------------------------------------
-      for (const v of dev.variables) {
-        // Parsear as opções da variável (JSON armazenado no banco)
-        let opts = {};
+      const parseVarOpts = (v) => {
         try {
-          opts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
-        } catch(e) {
-          opts = {};
+          return typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
+        } catch(e) { return {}; }
+      };
+
+      // -----------------------------------------------------------------------
+      // FASE 1: Agrupar variáveis por tipo e construir blocos de leitura
+      //
+      // Em vez de fazer 1 requisição TCP por variável, agrupamos endereços
+      // consecutivos (ou próximos) num único request FC03/FC01.
+      // Ex: 20 holding registers → 1 bloco → 1 request TCP em vez de 20.
+      //
+      // MAX_GAP: endereços com gap <= MAX_GAP são fundidos no mesmo bloco.
+      // Isso evita gerar blocos enormes por causa de poucos gaps pequenos.
+      // -----------------------------------------------------------------------
+      const MAX_GAP    = 5;   // gap máximo entre variáveis para fundir em bloco
+      const MAX_BLOCK  = 120; // limite de registers por request (FC03 suporta até 125)
+
+      const buildBlocks = (vars, getNumRegs) => {
+        if (!vars.length) return [];
+        const sorted = [...vars].sort((a, b) => (parseInt(a.modbus_address)||0) - (parseInt(b.modbus_address)||0));
+        const blocks = [];
+        let block = null;
+
+        for (const v of sorted) {
+          const addr   = parseInt(v.modbus_address) || 0;
+          const nRegs  = getNumRegs(v);
+          const newEnd = addr + nRegs;
+
+          if (!block) {
+            block = { start: addr, end: newEnd, vars: [v] };
+          } else {
+            const gap = addr - block.end;
+            if (gap <= MAX_GAP && (newEnd - block.start) <= MAX_BLOCK) {
+              block.end = Math.max(block.end, newEnd);
+              block.vars.push(v);
+            } else {
+              blocks.push(block);
+              block = { start: addr, end: newEnd, vars: [v] };
+            }
+          }
         }
+        if (block) blocks.push(block);
+        return blocks;
+      };
 
-        // Determinar formato e quantidade de registros a ler
-        const dataFormat    = opts.data_format || (opts.data_size == 32 ? '32_float' : '16_int');
-        const endianness    = opts.endianness || 'ABCD';
-        const numRegisters  = String(dataFormat).startsWith('32') ? 2 : 1; // 32-bit ocupa 2 words
-        const mType         = String(v.modbus_type || '').toLowerCase();
+      // Separar variáveis por tipo
+      const holdingVars  = [], inputVars = [], coilVars = [], discreteVars = [];
+      for (const v of dev.variables) {
+        const mType = String(v.modbus_type || '').toLowerCase();
+        if      (mType === 'holding' || mType === 'holdingregister') holdingVars.push(v);
+        else if (mType === 'input'   || mType === 'inputregister')   inputVars.push(v);
+        else if (mType === 'coil')                                   coilVars.push(v);
+        else if (mType === 'discrete'|| mType === 'inputstatus')     discreteVars.push(v);
+      }
 
-        // Endereço de wire (0-based, direto para o frame Modbus)
-        const wireAddr = Math.max(0, parseInt(v.modbus_address) || 0);
+      const getNumRegsForVar = (v) => {
+        const opts = parseVarOpts(v);
+        const df   = opts.data_format || (opts.data_size == 32 ? '32_float' : '16_int');
+        return String(df).startsWith('32') ? 2 : 1;
+      };
 
-        let rawValue   = null;
+      const holdingBlocks  = buildBlocks(holdingVars,  getNumRegsForVar);
+      const inputBlocks    = buildBlocks(inputVars,    getNumRegsForVar);
+      const coilBlocks     = buildBlocks(coilVars,    () => 1);
+      const discreteBlocks = buildBlocks(discreteVars, () => 1);
+
+      // -----------------------------------------------------------------------
+      // FASE 2: Executar leituras em bloco (sequenciais para respeitar TCP único)
+      //
+      // Cada bloco = 1 requisição Modbus para N registros consecutivos.
+      // O total de requisições TCP agora é igual ao número de blocos, não de variáveis.
+      // -----------------------------------------------------------------------
+      const blockData = new Map(); // key: `${type}:${startAddr}` → array de dados
+
+      const readBlock = async (type, start, count, readFn) => {
+        try {
+          const res = await readFn(start, count);
+          if (res && res.data) blockData.set(`${type}:${start}`, res.data);
+        } catch(e) {
+          console.warn(`[Modbus Warning] Falha ao ler bloco ${type}[${start}..${start+count-1}]: ${e.message}`);
+        }
+      };
+
+      for (const b of holdingBlocks)  await readBlock('holding',  b.start, b.end - b.start, (a,c) => dev.client.readHoldingRegisters(a, c));
+      for (const b of inputBlocks)    await readBlock('input',    b.start, b.end - b.start, (a,c) => dev.client.readInputRegisters(a, c));
+      for (const b of coilBlocks)     await readBlock('coil',     b.start, b.end - b.start, (a,c) => dev.client.readCoils(a, c));
+      for (const b of discreteBlocks) await readBlock('discrete', b.start, b.end - b.start, (a,c) => dev.client.readDiscreteInputs(a, c));
+
+      // -----------------------------------------------------------------------
+      // FASE 3: Extrair valores de cada variável a partir dos blocos lidos
+      // -----------------------------------------------------------------------
+      const getFromBlock = (typeKey, blocks, addr, nRegs) => {
+        for (const b of blocks) {
+          if (addr >= b.start && (addr + nRegs) <= b.end) {
+            const data = blockData.get(`${typeKey}:${b.start}`);
+            if (!data) return null;
+            const offset = addr - b.start;
+            return data.slice(offset, offset + nRegs);
+          }
+        }
+        return null;
+      };
+
+      for (const v of dev.variables) {
+        const opts         = parseVarOpts(v);
+        const mType        = String(v.modbus_type || '').toLowerCase();
+        const wireAddr     = parseInt(v.modbus_address) || 0;
+        const dataFormat   = opts.data_format || (opts.data_size == 32 ? '32_float' : '16_int');
+        const endianness   = opts.endianness || 'ABCD';
+        const numRegisters = String(dataFormat).startsWith('32') ? 2 : 1;
+
+        let rawValue    = null;
         let readSuccess = false;
 
-        try {
-          // Selecionar função Modbus conforme o tipo de registrador
-          if (mType === 'holding' || mType === 'holdingregister') {
-            // Função Modbus 03 — Holding Register (leitura/escrita)
-            const res  = await dev.client.readHoldingRegisters(wireAddr, numRegisters);
-            rawValue   = (res && res.data) ? parseModbusValue(res.data, dataFormat, endianness) : 0;
-            readSuccess = true;
+        if (mType === 'holding' || mType === 'holdingregister') {
+          const slice = getFromBlock('holding', holdingBlocks, wireAddr, numRegisters);
+          if (slice) { rawValue = parseModbusValue(slice, dataFormat, endianness); readSuccess = true; }
 
-          } else if (mType === 'input' || mType === 'inputregister') {
-            // Função Modbus 04 — Input Register (somente leitura)
-            const res  = await dev.client.readInputRegisters(wireAddr, numRegisters);
-            rawValue   = (res && res.data) ? parseModbusValue(res.data, dataFormat, endianness) : 0;
-            readSuccess = true;
+        } else if (mType === 'input' || mType === 'inputregister') {
+          const slice = getFromBlock('input', inputBlocks, wireAddr, numRegisters);
+          if (slice) { rawValue = parseModbusValue(slice, dataFormat, endianness); readSuccess = true; }
 
-          } else if (mType === 'coil') {
-            // Função Modbus 01 — Coil (bit de saída, leitura/escrita)
-            const res  = await dev.client.readCoils(wireAddr, 1);
-            rawValue   = (res && res.data) ? res.data[0] : false;
+        } else if (mType === 'coil') {
+          const slice = getFromBlock('coil', coilBlocks, wireAddr, 1);
+          if (slice) {
+            rawValue = slice[0];
             readSuccess = true;
-
-            // Log condicional: mostrar apenas quando o valor muda (evita spam no console)
             const prevVal = this.state[v.name];
             if (prevVal !== Boolean(rawValue)) {
               console.log(`[Modbus Poll] Coil[${wireAddr}] '${v.name}': ${prevVal} → ${rawValue}`);
             }
-
-          } else if (mType === 'discrete' || mType === 'inputstatus') {
-            // Função Modbus 02 — Discrete Input (bit de entrada, somente leitura)
-            const res  = await dev.client.readDiscreteInputs(wireAddr, 1);
-            rawValue   = (res && res.data) ? res.data[0] : false;
-            readSuccess = true;
           }
-          // Se mType não reconhecido, readSuccess permanece false e usa valor anterior
 
-        } catch (readErr) {
-          // Erro isolado de leitura: registra aviso mas continua com as demais variáveis
-          console.warn(`[Modbus Warning] Falha ao ler '${v.name}' [${mType}#${wireAddr}]: ${readErr.message}`);
+        } else if (mType === 'discrete' || mType === 'inputstatus') {
+          const slice = getFromBlock('discrete', discreteBlocks, wireAddr, 1);
+          if (slice) { rawValue = slice[0]; readSuccess = true; }
         }
 
         // -------------------------------------------------------------------
@@ -390,25 +469,19 @@ class PLCService extends EventEmitter {
             parseInt(opts.bit_index) >= 0 &&
             (mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister')
           ) {
-            // Modo bit_index: extrai um bit específico da word de 16 bits
             const bitIdx = parseInt(opts.bit_index);
             finalValue = ((rawValue >> bitIdx) & 1) === 1;
 
           } else if (v.type === 'analog') {
-            // Variável analógica: aplica escala e offset configurados
             let val = typeof rawValue === 'number' ? rawValue : (typeof rawValue === 'boolean' ? (rawValue ? 1 : 0) : 0);
-
-            // Fator de escala: multiplica o valor bruto (ex: 1000 raw → 10.0 com scale=0.01)
             if (opts.scale !== undefined && opts.scale !== null && opts.scale !== '' &&
                 !isNaN(opts.scale) && parseFloat(opts.scale) !== 1) {
               val = val * parseFloat(opts.scale);
             }
-            // Offset: soma um valor fixo após a escala (ex: conversão de temperatura)
             if (opts.offset !== undefined && opts.offset !== null && opts.offset !== '' &&
                 !isNaN(opts.offset) && parseFloat(opts.offset) !== 0) {
               val = val + parseFloat(opts.offset);
             }
-            // Decimais: divide por potência de 10 se o valor é armazenado como inteiro escalado
             if (v.decimals > 0 && dataFormat !== '32_float') {
               finalValue = val / Math.pow(10, v.decimals || 0);
             } else {
@@ -416,34 +489,29 @@ class PLCService extends EventEmitter {
             }
 
           } else if (v.type === 'boolean') {
-            // Variável booleana simples (coil ou bit de word inteiro)
             finalValue = Boolean(rawValue);
 
           } else {
-            // Tipo desconhecido: passa o valor bruto sem processamento
             finalValue = rawValue;
           }
         } else {
-          // Falha na leitura: mantém o último valor conhecido (não vai para zero)
           finalValue = this.state[v.name] !== undefined ? this.state[v.name] : 0;
         }
 
-        // Atualizar estado global com o valor processado
+        // Atualizar estado global
         this.state[v.name] = finalValue;
         if (v.display_name) this.state[v.display_name] = finalValue;
 
         // -------------------------------------------------------------------
-        // Persistência no histórico (conforme intervalo configurado)
+        // Persistência no histórico
         // -------------------------------------------------------------------
         const intervalMs = (this.historyIntervalSeconds || 15) * 1000;
         const nowMs      = Date.now();
-
         if (!this.lastHistoryLogTime[v.id] || (nowMs - this.lastHistoryLogTime[v.id]) >= intervalMs) {
           this.lastHistoryLogTime[v.id] = nowMs;
-          const isoNow = new Date(nowMs).toISOString();
           db.run(
             `INSERT INTO variable_history (variable_id, value, timestamp) VALUES (?, ?, ?)`,
-            [v.id, finalValue, isoNow]
+            [v.id, finalValue, new Date(nowMs).toISOString()]
           );
         }
       } // fim do loop de variáveis
