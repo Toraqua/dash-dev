@@ -591,6 +591,11 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
       return next;
     });
 
+    // Intervalo mínimo entre pontos no gráfico em tempo real:
+    // Usa o historyIntervalSeconds configurado pelo usuário (padrão: 15s).
+    // Isso evita que o gráfico trepa a cada poll (que agora pode ser sub-segundo).
+    const chartIntervalMs = ((generalConfig?.history_interval_seconds) || 15) * 1000;
+
     setHistoryData(prev => {
       const next = { ...prev };
       let updated = false;
@@ -600,7 +605,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
           if (rawVal !== undefined) {
             const currentArr = next[v.id] || [];
             const lastItem = currentArr[currentArr.length - 1];
-            if (!lastItem || (nowMs - lastItem.raw_ts >= 2000) || lastItem.val !== rawVal) {
+            // Só adicionar um novo ponto se passou tempo suficiente desde o último
+            // (não adicionar a cada poll — evita tremor no gráfico)
+            if (!lastItem || (nowMs - lastItem.raw_ts >= chartIntervalMs)) {
               const newArr = [...currentArr, { time: nowTime, val: rawVal, raw_ts: nowMs }];
               if (newArr.length > 2000) newArr.shift();
               next[v.id] = newArr;
@@ -609,9 +616,8 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
           }
         }
       });
-      return updated ? next : prev;
     });
-  }, [plcState, variables, generalConfig?.timezone]);
+  }, [plcState, variables, generalConfig?.timezone, generalConfig?.history_interval_seconds]);
 
   // Armazena o layout atual conforme o usuário arrasta
   const handleLayoutChange = (layout) => {
