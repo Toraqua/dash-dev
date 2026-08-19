@@ -616,6 +616,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
           }
         }
       });
+      return updated ? next : prev;
     });
   }, [plcState, variables, generalConfig?.timezone, generalConfig?.history_interval_seconds]);
 
