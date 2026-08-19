@@ -143,6 +143,45 @@ class PLCService extends EventEmitter {
     this.loadGeneralConfig();
     this.loadActiveAlarms();
     this.reloadDevices();
+    this.startWatchdog();
+  }
+
+  // ---------------------------------------------------------------------------
+  // startWatchdog — Monitoramento de autocura em segundo plano (roda a cada 15s).
+  // Garante que QUALQUER travamento de socket, perda de rota VPN ou congelamento
+  // de conexão seja detectado e corrigido automaticamente sem ação manual.
+  // ---------------------------------------------------------------------------
+  startWatchdog() {
+    if (this.watchdogInterval) clearInterval(this.watchdogInterval);
+    this.watchdogInterval = setInterval(() => {
+      const now = Date.now();
+      for (const devId in this.devices) {
+        const dev = this.devices[devId];
+        if (!dev) continue;
+
+        // Caso 1: Dispositivo marcado offline e sem reconexão agendada rodando
+        if (!dev.connected && !dev.connecting && !dev.retryTimeout) {
+          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} desanimado (Offline). Forçando reconexão imediata...`);
+          dev.connecting = false;
+          dev.isPolling  = false;
+          this.connectDevice(devId);
+        }
+
+        // Caso 2: Dispositivo preso em tentativa de conexão por mais de 10s
+        if (dev.connecting && dev.connectStartTime && (now - dev.connectStartTime) > 10000) {
+          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} preso na conexão (>10s). Destruindo socket e resetando...`);
+          dev.connecting = false;
+          dev.isPolling  = false;
+          this.resetDeviceConnection(devId, 'Watchdog: connect timeout stuck');
+        }
+
+        // Caso 3: Dispositivo marcado como conectado, mas sem receber dados há mais de 35s
+        if (dev.connected && dev.lastSuccessPollTime && (now - dev.lastSuccessPollTime) > 35000) {
+          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} sem telemetria há mais de 35s. Forçando reset de conexão...`);
+          this.resetDeviceConnection(devId, 'Watchdog: telemetry stale >35s');
+        }
+      }
+    }, 15000);
   }
 
   // ---------------------------------------------------------------------------
@@ -206,6 +245,9 @@ class PLCService extends EventEmitter {
           variables:  [],           // Lista de variáveis configuradas para este dispositivo
           alarms:     [],           // Lista de alarmes configurados para este dispositivo
           connected:  false,        // Flag de conexão TCP ativa
+          connecting: false,
+          connectStartTime: 0,
+          lastSuccessPollTime: Date.now(),
           isPolling:  false,        // Guard: evita ciclos de polling sobrepostos
           retryCount: 0,            // Contador de tentativas de reconexão (para backoff)
           pollTimeout: null,        // Handle do setTimeout do polling
@@ -251,7 +293,9 @@ class PLCService extends EventEmitter {
     if (!dev) return;
 
     console.warn(`[Modbus Reset] Reseta conexão do dispositivo ID ${deviceId} [Offline]: ${reason}`);
-    dev.connected = false;
+    dev.connected  = false;
+    dev.connecting = false;
+    dev.isPolling  = false;
 
     if (dev.pollTimeout) {
       clearTimeout(dev.pollTimeout);
@@ -271,7 +315,10 @@ class PLCService extends EventEmitter {
     dev.retryCount = (dev.retryCount || 0) + 1;
 
     if (dev.retryTimeout) clearTimeout(dev.retryTimeout);
-    dev.retryTimeout = setTimeout(() => this.connectDevice(deviceId), delay);
+    dev.retryTimeout = setTimeout(() => {
+      dev.retryTimeout = null;
+      this.connectDevice(deviceId);
+    }, delay);
   }
 
   // ---------------------------------------------------------------------------
@@ -282,7 +329,8 @@ class PLCService extends EventEmitter {
     if (!dev) return;
 
     if (dev.connecting) return;
-    dev.connecting = true;
+    dev.connecting       = true;
+    dev.connectStartTime = Date.now();
 
     // Limpar conexões e agendamentos anteriores
     if (dev.pollTimeout)  { clearTimeout(dev.pollTimeout);  dev.pollTimeout  = null; }
@@ -305,18 +353,26 @@ class PLCService extends EventEmitter {
     // Tratar erros no nível do socket TCP
     client.on('error', (err) => {
       console.warn(`[Modbus Socket Error] ID ${deviceId}: ${err?.message || err}`);
+      dev.connecting = false;
       this.resetDeviceConnection(deviceId, err?.message || 'Socket error');
     });
 
     dev.client = client;
 
-    client.connectTCP(dev.info.ip_address, { port: dev.info.port })
+    // Hard Timeout de 5s no handshake TCP para evitar travamento de SO na VPN
+    const connectPromise = client.connectTCP(dev.info.ip_address, { port: dev.info.port });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('TCP Handshake Timeout (5s)')), 5000)
+    );
+
+    Promise.race([connectPromise, timeoutPromise])
       .then(() => {
         console.log(`[Modbus] Dispositivo ID ${deviceId} conectado com sucesso.`);
         dev.client.setID(1);
-        dev.connected  = true;
-        dev.connecting = false;
-        dev.retryCount = 0; // Resetar backoff
+        dev.connected           = true;
+        dev.connecting          = false;
+        dev.retryCount          = 0; // Resetar backoff
+        dev.lastSuccessPollTime = Date.now();
 
         // Iniciar ciclo de polling
         this.pollDevice(deviceId);
@@ -521,6 +577,7 @@ class PLCService extends EventEmitter {
         } else {
           dev.failedPolls = 0;
           dev.connected = true;
+          dev.lastSuccessPollTime = Date.now();
         }
       }
 
