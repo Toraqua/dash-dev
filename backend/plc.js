@@ -625,32 +625,61 @@ class PLCService extends EventEmitter {
       } else {
         // Modo escrita de word inteira ou float (analógico com escala de decimais)
         
-        // 1. Descobrir o formato da variável (se existir)
+        // 1. Descobrir o formato da variável parseando o campo 'options' (JSON) do banco
         let dataFormat = '16_int';
         let endianness = 'ABCD';
+        let varScale   = null;
+        let varOffset  = null;
+        let varDecimals = decimals || 0;
+
         if (var_name) {
           const vars = dev.variables || [];
           const found = vars.find(v => v.name === var_name);
           if (found) {
-            if (found.data_format) dataFormat = found.data_format;
-            if (found.endianness) endianness = found.endianness;
+            // options é uma string JSON — precisa fazer parse
+            let opts = {};
+            try {
+              opts = typeof found.options === 'string' ? JSON.parse(found.options || '{}') : (found.options || {});
+            } catch(e) { opts = {}; }
+
+            if (opts.data_format) dataFormat = opts.data_format;
+            if (opts.endianness)  endianness  = opts.endianness;
+            if (opts.scale  !== undefined && opts.scale  !== null && opts.scale  !== '') varScale  = parseFloat(opts.scale);
+            if (opts.offset !== undefined && opts.offset !== null && opts.offset !== '') varOffset = parseFloat(opts.offset);
+            if (found.decimals !== undefined && found.decimals !== null) varDecimals = parseInt(found.decimals) || 0;
           }
         }
 
         const is32Bit = String(dataFormat).startsWith('32');
         const isFloat = dataFormat === '32_float';
-        
-        let words = [];
+
+        // 2. Reverter transformações aplicadas na leitura antes de enviar para o CLP:
+        //    Na leitura: finalValue = (rawValue * scale + offset) / 10^decimals  (para não-float)
+        //    Na escrita: rawValue  = (value * 10^decimals - offset) / scale
+        //    Nota: float 32 bits não usa decimals nem scale — é enviado diretamente
+        let valueToEncode = Number(value);
+        if (!isFloat) {
+          // Reverter offset
+          if (varOffset !== null && !isNaN(varOffset) && varOffset !== 0) {
+            valueToEncode = valueToEncode - varOffset;
+          }
+          // Reverter scale
+          if (varScale !== null && !isNaN(varScale) && varScale !== 0 && varScale !== 1) {
+            valueToEncode = valueToEncode / varScale;
+          }
+        }
+
+        console.log(`[Modbus Write] Holding fmt=${dataFormat} end=${endianness} scale=${varScale} offset=${varOffset} dec=${varDecimals} userVal=${value} encoded=${valueToEncode}`);
 
         if (is32Bit) {
-          const valToWrite = isFloat ? Number(value) : Math.round(Number(value) * Math.pow(10, decimals || 0));
+          const valToWrite = isFloat ? valueToEncode : Math.round(valueToEncode * Math.pow(10, varDecimals));
           const buf = Buffer.alloc(4);
           
           if (isFloat) buf.writeFloatBE(valToWrite, 0);
-          else if (dataFormat === '32_int') buf.writeInt32BE(valToWrite, 0);
-          else buf.writeUInt32BE(valToWrite, 0);
+          else if (dataFormat === '32_int')  buf.writeInt32BE(valToWrite, 0);
+          else                               buf.writeUInt32BE(valToWrite >>> 0, 0);
 
-          let A = buf[0], B = buf[1], C = buf[2], D = buf[3];
+          const A = buf[0], B = buf[1], C = buf[2], D = buf[3];
           let finalBytes;
           switch (endianness) {
             case 'BADC': finalBytes = [B, A, D, C]; break;
@@ -659,18 +688,17 @@ class PLCService extends EventEmitter {
             case 'ABCD':
             default:     finalBytes = [A, B, C, D]; break;
           }
-          const w1 = (finalBytes[0] << 8) | finalBytes[1];
-          const w2 = (finalBytes[2] << 8) | finalBytes[3];
-          words = [w1, w2];
+          const w1 = ((finalBytes[0] << 8) | finalBytes[1]) & 0xFFFF;
+          const w2 = ((finalBytes[2] << 8) | finalBytes[3]) & 0xFFFF;
+          const words = [w1, w2];
           
-          console.log(`[Modbus Write] writeRegisters(addr=${wireAddr}, words=[${words.join(', ')}]) val=${value} fmt=${dataFormat}`);
-          // FC16 - Write Multiple Registers
+          console.log(`[Modbus Write] FC16 writeRegisters(addr=${wireAddr}, words=[${w1}, ${w2}]) rawVal=${valToWrite}`);
           await dev.client.writeRegisters(wireAddr, words);
+
         } else {
-          // Fallback seguro de 16 bits (mantendo a compatibilidade estrita do FC06)
-          const rawValue = Math.round(Number(value) * Math.pow(10, decimals || 0));
-          console.log(`[Modbus Write] writeRegister(addr=${wireAddr}, raw=${rawValue}) val=${value} fmt=${dataFormat}`);
-          // FC06 - Write Single Register
+          // 16 bits — FC06
+          const rawValue = Math.round(valueToEncode * Math.pow(10, varDecimals));
+          console.log(`[Modbus Write] FC06 writeRegister(addr=${wireAddr}, raw=${rawValue}) encoded=${valueToEncode}`);
           await dev.client.writeRegister(wireAddr, rawValue);
         }
 
