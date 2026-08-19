@@ -161,24 +161,24 @@ class PLCService extends EventEmitter {
 
         // Caso 1: Dispositivo marcado offline e sem reconexão agendada rodando
         if (!dev.connected && !dev.connecting && !dev.retryTimeout) {
-          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} desanimado (Offline). Forçando reconexão imediata...`);
+          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} offline sem reconexão ativa. Forçando reconexão...`);
           dev.connecting = false;
           dev.isPolling  = false;
           this.connectDevice(devId);
         }
 
-        // Caso 2: Dispositivo preso em tentativa de conexão por mais de 10s
-        if (dev.connecting && dev.connectStartTime && (now - dev.connectStartTime) > 10000) {
-          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} preso na conexão (>10s). Destruindo socket e resetando...`);
+        // Caso 2: Dispositivo preso em tentativa de conexão por mais de 15s
+        if (dev.connecting && dev.connectStartTime && (now - dev.connectStartTime) > 15000) {
+          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} preso na conexão (>15s). Destruindo socket e resetando...`);
           dev.connecting = false;
           dev.isPolling  = false;
           this.resetDeviceConnection(devId, 'Watchdog: connect timeout stuck');
         }
 
-        // Caso 3: Dispositivo marcado como conectado, mas sem receber dados há mais de 35s
-        if (dev.connected && dev.lastSuccessPollTime && (now - dev.lastSuccessPollTime) > 35000) {
-          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} sem telemetria há mais de 35s. Forçando reset de conexão...`);
-          this.resetDeviceConnection(devId, 'Watchdog: telemetry stale >35s');
+        // Caso 3: Dispositivo marcado como conectado, mas sem receber dados há mais de 90s (previne falsos positivos)
+        if (dev.connected && dev.variables && dev.variables.length > 0 && dev.lastSuccessPollTime && (now - dev.lastSuccessPollTime) > 90000) {
+          console.warn(`[Watchdog Modbus] Dispositivo ID ${devId} sem telemetria há mais de 90s. Forçando reset de conexão...`);
+          this.resetDeviceConnection(devId, 'Watchdog: telemetry stale >90s');
         }
       }
     }, 15000);
@@ -202,65 +202,55 @@ class PLCService extends EventEmitter {
   // ---------------------------------------------------------------------------
   loadGeneralConfig() {
     db.get("SELECT value FROM system_settings WHERE key = 'general_config'", [], (err, row) => {
-      if (row && row.value) {
+      if (!err && row && row.value) {
         try {
           const cfg = JSON.parse(row.value);
-          this.historyIntervalSeconds = parseInt(cfg.history_interval_seconds) || 15;
-        } catch(e) {
-          this.historyIntervalSeconds = 15;
-        }
-      } else {
-        this.historyIntervalSeconds = 15;
+          if (cfg.history_interval_seconds) {
+            this.historyIntervalSeconds = parseInt(cfg.history_interval_seconds) || 15;
+          }
+        } catch(e) {}
       }
     });
   }
 
   // ---------------------------------------------------------------------------
-  // reloadDevices — Recarrega todos os dispositivos do banco.
-  // Para os polls e fecha as conexões existentes, depois reconecta tudo.
-  //
-  // IMPORTANTE: NÃO reseta this.state — apenas inicializa variáveis novas
-  // que ainda não possuem estado registrado, preservando valores atuais.
+  // reloadDevices — Recarrega todos os dispositivos do banco de forma encadeada.
   // ---------------------------------------------------------------------------
   async reloadDevices() {
-    // Parar todos os ciclos de polling e fechar conexões TCP existentes
     for (const id in this.devices) {
       const dev = this.devices[id];
-      if (dev.intervalId) clearInterval(dev.intervalId);
+      if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
       if (dev.retryTimeout) clearTimeout(dev.retryTimeout);
       try { if (dev.client) dev.client.close(); } catch(e) {}
     }
     this.devices = {};
 
-    // Buscar dispositivos do banco e inicializar cada um
     db.all('SELECT * FROM devices', [], (err, devs) => {
       if (err || !devs) return;
 
       devs.forEach(device => {
-        // Estrutura do dispositivo na memória
-        this.devices[device.id] = {
-          info:       device,       // Metadados: IP, porta, intervalo
-          client:     null,         // Será criado em connectDevice()
-          mutex:      new AsyncMutex(), // Sincronizador de requisições por dispositivo
-          variables:  [],           // Lista de variáveis configuradas para este dispositivo
-          alarms:     [],           // Lista de alarmes configurados para este dispositivo
-          connected:  false,        // Flag de conexão TCP ativa
-          connecting: false,
-          connectStartTime: 0,
-          lastSuccessPollTime: Date.now(),
-          isPolling:  false,        // Guard: evita ciclos de polling sobrepostos
-          retryCount: 0,            // Contador de tentativas de reconexão (para backoff)
-          pollTimeout: null,        // Handle do setTimeout do polling
-          retryTimeout: null        // Handle do setTimeout de reconexão
+        const devId = device.id;
+        this.devices[devId] = {
+          info:                   device,
+          client:                 null,
+          mutex:                  new AsyncMutex(),
+          variables:              [],
+          alarms:                 [],
+          connected:              false,
+          connecting:             false,
+          connectStartTime:       0,
+          lastSuccessPollTime:    Date.now(),
+          isPolling:              false,
+          retryCount:             0,
+          pollTimeout:            null,
+          retryTimeout:           null
         };
 
-        // Carregar variáveis do dispositivo e inicializar estado somente para variáveis novas
-        db.all('SELECT * FROM variables WHERE device_id = ?', [device.id], (err, vars) => {
-          if (!err && vars) {
-            this.devices[device.id].variables = vars;
+        // Carregar variáveis e alarmes em ordem antes de tentar conectar
+        db.all('SELECT * FROM variables WHERE device_id = ?', [devId], (vErr, vars) => {
+          if (!vErr && vars && this.devices[devId]) {
+            this.devices[devId].variables = vars;
             vars.forEach(v => {
-              // NÃO sobrescreve: preserva o valor atual em memória se já existir
-              // Isso evita "piscar" o painel quando dispositivos são editados
               if (this.state[v.name] === undefined) {
                 this.state[v.name] = v.type === 'analog' ? 0.0 : false;
               }
@@ -269,17 +259,14 @@ class PLCService extends EventEmitter {
               }
             });
           }
-        });
 
-        // Carregar alarmes do dispositivo
-        db.all('SELECT * FROM alarm_configs WHERE device_id = ?', [device.id], (err, alarms) => {
-          if (!err && alarms) {
-            this.devices[device.id].alarms = alarms;
-          }
+          db.all('SELECT * FROM alarm_configs WHERE device_id = ?', [devId], (aErr, alarms) => {
+            if (!aErr && alarms && this.devices[devId]) {
+              this.devices[devId].alarms = alarms;
+            }
+            this.connectDevice(devId);
+          });
         });
-
-        // Iniciar tentativa de conexão TCP
-        this.connectDevice(device.id);
       });
     });
   }
