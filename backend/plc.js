@@ -8,6 +8,36 @@ const EventEmitter = require('events');
 const db           = require('./db');
 const ModbusRTU    = require('modbus-serial');
 
+// AsyncMutex — Sincronizador de exclusão mútua assíncrono para conexões Modbus TCP.
+// Garante que operações de leitura (poll) e escrita (setpoint/botões) NUNCA
+// sejam intercaladas no mesmo socket TCP, prevenindo race-conditions e desincronização.
+class AsyncMutex {
+  constructor() {
+    this.queue = [];
+    this.locked = false;
+  }
+
+  acquire() {
+    return new Promise((resolve) => {
+      if (!this.locked) {
+        this.locked = true;
+        resolve(() => this.release());
+      } else {
+        this.queue.push(resolve);
+      }
+    });
+  }
+
+  release() {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next(() => this.release());
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
 // =============================================================================
 // parseModbusValue — Interpreta os registros brutos do Modbus de acordo com
 // o formato de dados (16_int, 16_uint, 32_int, 32_uint, 32_float) e ordem dos
@@ -170,15 +200,16 @@ class PLCService extends EventEmitter {
       devs.forEach(device => {
         // Estrutura do dispositivo na memória
         this.devices[device.id] = {
-          info:       device,  // Metadados: IP, porta, intervalo
-          client:     null,    // Será criado em connectDevice()
-          variables:  [],      // Lista de variáveis configuradas para este dispositivo
-          alarms:     [],      // Lista de alarmes configurados para este dispositivo
-          connected:  false,   // Flag de conexão TCP ativa
-          isPolling:  false,   // Guard: evita ciclos de polling sobrepostos
-          retryCount: 0,       // Contador de tentativas de reconexão (para backoff)
-          intervalId: null,    // Handle do setInterval do polling
-          retryTimeout: null   // Handle do setTimeout de reconexão
+          info:       device,       // Metadados: IP, porta, intervalo
+          client:     null,         // Será criado em connectDevice()
+          mutex:      new AsyncMutex(), // Sincronizador de requisições por dispositivo
+          variables:  [],           // Lista de variáveis configuradas para este dispositivo
+          alarms:     [],           // Lista de alarmes configurados para este dispositivo
+          connected:  false,        // Flag de conexão TCP ativa
+          isPolling:  false,        // Guard: evita ciclos de polling sobrepostos
+          retryCount: 0,            // Contador de tentativas de reconexão (para backoff)
+          pollTimeout: null,        // Handle do setTimeout do polling
+          retryTimeout: null        // Handle do setTimeout de reconexão
         };
 
         // Carregar variáveis do dispositivo e inicializar estado somente para variáveis novas
@@ -212,31 +243,69 @@ class PLCService extends EventEmitter {
   }
 
   // ---------------------------------------------------------------------------
+  // resetDeviceConnection — Reseta com segurança uma conexão Modbus TCP corrompida.
+  // Destrói o socket atual e reagenda uma nova conexão limpa com backoff.
+  // ---------------------------------------------------------------------------
+  resetDeviceConnection(deviceId, reason) {
+    const dev = this.devices[deviceId];
+    if (!dev) return;
+
+    console.warn(`[Modbus Reset] Reseta conexão do dispositivo ID ${deviceId} [Offline]: ${reason}`);
+    dev.connected = false;
+
+    if (dev.pollTimeout) {
+      clearTimeout(dev.pollTimeout);
+      dev.pollTimeout = null;
+    }
+
+    if (dev.client) {
+      try {
+        if (dev.client.destroy) dev.client.destroy();
+        else dev.client.close(() => {});
+      } catch(e) {}
+      dev.client = null;
+    }
+
+    // Agendar reconexão limpa com backoff exponencial
+    const delay = Math.min(3000 * Math.pow(1.5, dev.retryCount || 0), 20000);
+    dev.retryCount = (dev.retryCount || 0) + 1;
+
+    if (dev.retryTimeout) clearTimeout(dev.retryTimeout);
+    dev.retryTimeout = setTimeout(() => this.connectDevice(deviceId), delay);
+  }
+
+  // ---------------------------------------------------------------------------
   // connectDevice — Estabelece a conexão TCP Modbus com o dispositivo.
-  // Em caso de falha, reagenda com backoff exponencial (máximo 30 segundos).
-  //
-  // Backoff exponencial: delay = min(5000 * 2^tentativas, 30000) ms
-  //   Tentativa 1: 5s | Tentativa 2: 10s | Tentativa 3: 20s | Tentativa 4+: 30s
   // ---------------------------------------------------------------------------
   connectDevice(deviceId) {
     const dev = this.devices[deviceId];
     if (!dev) return;
 
-    // Fechar client anterior antes de criar novo (evita leak de conexões TCP)
+    if (dev.connecting) return;
+    dev.connecting = true;
+
+    // Limpar conexões e agendamentos anteriores
+    if (dev.pollTimeout)  { clearTimeout(dev.pollTimeout);  dev.pollTimeout  = null; }
+    if (dev.retryTimeout) { clearTimeout(dev.retryTimeout); dev.retryTimeout = null; }
+
     if (dev.client) {
-      try { dev.client.close(() => {}); } catch(e) {}
+      try {
+        if (dev.client.destroy) dev.client.destroy();
+        else dev.client.close(() => {});
+      } catch(e) {}
       dev.client = null;
     }
 
     console.log(`[Modbus] Conectando ao dispositivo ID ${deviceId} (${dev.info.ip_address}:${dev.info.port})...`);
 
-    // Criar novo client Modbus TCP com timeout de 1.5 segundos por transação
+    // Criar novo client Modbus TCP com timeout de 2 segundos por frame
     const client = new ModbusRTU();
-    client.setTimeout(1500);
+    client.setTimeout(2000);
 
-    // Tratar erros no nível do socket TCP (desconexão inesperada, etc.)
+    // Tratar erros no nível do socket TCP
     client.on('error', (err) => {
-      console.warn(`[Modbus] Aviso de socket no dispositivo ID ${deviceId}: ${err?.message || err}`);
+      console.warn(`[Modbus Socket Error] ID ${deviceId}: ${err?.message || err}`);
+      this.resetDeviceConnection(deviceId, err?.message || 'Socket error');
     });
 
     dev.client = client;
@@ -244,28 +313,18 @@ class PLCService extends EventEmitter {
     client.connectTCP(dev.info.ip_address, { port: dev.info.port })
       .then(() => {
         console.log(`[Modbus] Dispositivo ID ${deviceId} conectado com sucesso.`);
-        // ID da unidade Modbus (padrão: 1)
         dev.client.setID(1);
         dev.connected  = true;
-        dev.retryCount = 0; // Resetar backoff após conexão bem-sucedida
+        dev.connecting = false;
+        dev.retryCount = 0; // Resetar backoff
 
-        // Parar poll anterior (se existia) e iniciar o ciclo de polling
-        if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
+        // Iniciar ciclo de polling
         this.pollDevice(deviceId);
       })
       .catch(e => {
         console.warn(`[Modbus] Falha ao conectar ID ${deviceId}: ${e?.message || e}`);
-        dev.connected = false;
-
-        try { client.close(() => {}); } catch(_) {}
-
-        // Calcular delay com backoff exponencial, limitado a 30 segundos
-        const delay = Math.min(5000 * Math.pow(2, dev.retryCount || 0), 30000);
-        dev.retryCount = (dev.retryCount || 0) + 1;
-        console.log(`[Modbus] Próxima tentativa para ID ${deviceId} em ${delay / 1000}s (tentativa #${dev.retryCount})`);
-
-        if (dev.retryTimeout) clearTimeout(dev.retryTimeout);
-        dev.retryTimeout = setTimeout(() => this.connectDevice(deviceId), delay);
+        dev.connecting = false;
+        this.resetDeviceConnection(deviceId, e?.message || 'Connection failed');
       });
   }
 
@@ -307,16 +366,17 @@ class PLCService extends EventEmitter {
   // ---------------------------------------------------------------------------
   async pollDevice(deviceId) {
     const dev = this.devices[deviceId];
-    if (!dev || !dev.connected) return;
+    if (!dev || !dev.connected || !dev.client) return;
 
-    // Guard: evita sobreposição de ciclos de poll
-    if (dev.isPolling) {
-      console.warn(`[Modbus] Poll sobreposição evitada para dispositivo ID ${deviceId}`);
-      return;
-    }
+    // Guard: evita ciclos de polling sobrepostos no mesmo dispositivo
+    if (dev.isPolling) return;
     dev.isPolling = true;
 
+    // Adquirir Mutex para impedir que leituras e escritas concorrentes corrompam o socket TCP
+    const releaseLock = await dev.mutex.acquire();
+
     try {
+      if (!dev.connected || !dev.client) return;
       // -----------------------------------------------------------------------
       // Helper: parseia as opções JSON de uma variável
       // -----------------------------------------------------------------------
@@ -659,26 +719,17 @@ class PLCService extends EventEmitter {
       this.emit('update', this.state);
 
     } catch (e) {
-      // Erro grave no ciclo de poll (ex: conexão TCP caiu, timeout total)
-      console.error(`[Modbus] Erro crítico ao fazer poll do dispositivo ID ${deviceId}: ${e.message}`);
-      dev.connected = false;
-
-      // Parar ciclo de polling e fechar conexão
-      if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
-      try { if (dev.client) dev.client.close(); } catch(_) {}
-
-      // Agendar reconexão com backoff exponencial
-      const delay = Math.min(5000 * Math.pow(2, dev.retryCount || 0), 30000);
-      dev.retryCount = (dev.retryCount || 0) + 1;
-      if (dev.retryTimeout) clearTimeout(dev.retryTimeout);
-      dev.retryTimeout = setTimeout(() => this.connectDevice(deviceId), delay);
+      console.error(`[Modbus Critical] Erro na leitura do dispositivo ID ${deviceId}: ${e.message}`);
+      this.resetDeviceConnection(deviceId, e.message);
 
     } finally {
+      // Liberar a trava de exclusão mútua do socket Modbus TCP
+      releaseLock();
+
       // Liberar o guard de polling ao final do ciclo
       dev.isPolling = false;
 
       // Se o dispositivo continua conectado, agendar o próximo ciclo de poll
-      // apenas APÓS o término do ciclo atual (evita fisicamente qualquer sobreposição)
       if (dev.connected) {
         if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
         dev.pollTimeout = setTimeout(
@@ -691,17 +742,7 @@ class PLCService extends EventEmitter {
 
   // ---------------------------------------------------------------------------
   // writeModbus — Escreve um valor em um registrador Modbus.
-  //
-  // Parâmetros:
-  //   deviceId    — ID do dispositivo alvo
-  //   modbus_type — Tipo: 'coil' | 'holding' | 'holdingregister'
-  //   address     — Endereço do registrador (0-based)
-  //   value       — Valor a escrever (boolean para coil, número para holding)
-  //   decimals    — Número de casas decimais (para escalar inteiros)
-  //   bit_index   — Índice de bit na word (>=0 para escrita de bit específico, -1 para word inteira)
-  //   var_name    — Nome técnico da variável (para atualizar this.state imediatamente)
-  //
-  // Retorna: true em caso de sucesso, lança exceção em caso de falha
+  // Sincronizado por Mutex para NUNCA intercalar no socket durante uma leitura.
   // ---------------------------------------------------------------------------
   async writeModbus(deviceId, modbus_type, address, value, decimals = 0, bit_index = -1, var_name = null) {
     const dev      = this.devices[deviceId];
@@ -710,15 +751,9 @@ class PLCService extends EventEmitter {
 
     console.log(`[Modbus Write] Dispositivo=${deviceId} Tipo=${mType} Endereço=${wireAddr} Valor=${value} Bit=${bit_index} Var=${var_name}`);
 
-    // -------------------------------------------------------------------------
-    // Helper interno: atualiza o estado global (this.state) para refletir a
-    // escrita imediatamente, sem esperar o próximo ciclo de polling.
-    // Atualiza tanto pelo nome técnico quanto pelo display_name.
-    // -------------------------------------------------------------------------
     const updateState = (val) => {
       if (!var_name) return;
       this.state[var_name] = val;
-      // Buscar o display_name correspondente para manter sincronia
       for (const devId in this.devices) {
         const vars  = this.devices[devId].variables || [];
         const found = vars.find(v => v.name === var_name);
@@ -728,16 +763,12 @@ class PLCService extends EventEmitter {
       }
     };
 
-    // -------------------------------------------------------------------------
-    // Dispositivo offline: atualiza apenas o estado em memória (sem escrita real)
-    // Útil para simular mudanças em modo de desenvolvimento sem CLP conectado.
-    // -------------------------------------------------------------------------
-    if (!dev || !dev.connected) {
+    // Dispositivo offline ou inexistente: atualiza estado local em memória apenas
+    if (!dev || !dev.connected || !dev.client) {
       console.warn(`[Modbus Write] Dispositivo ${deviceId} offline — atualizando estado em memória apenas.`);
       if (mType === 'coil') {
         updateState(Boolean(value));
       } else if ((mType === 'holding' || mType === 'holdingregister') && parseInt(bit_index) >= 0) {
-        // Modo bit: calcula a nova word preservando os demais bits
         const bitIdx  = parseInt(bit_index);
         const curWord = parseInt(this.state[var_name]) || 0;
         const newWord = Boolean(value) ? (curWord | (1 << bitIdx)) : (curWord & ~(1 << bitIdx));
@@ -749,127 +780,125 @@ class PLCService extends EventEmitter {
       return true;
     }
 
-    // -------------------------------------------------------------------------
-    // Escrita Modbus efetiva (dispositivo online)
-    // -------------------------------------------------------------------------
-    if (mType === 'coil') {
-      // Função Modbus 05 — Write Single Coil
-      const boolVal = Boolean(value);
-      console.log(`[Modbus Write] writeCoil(addr=${wireAddr}, val=${boolVal})`);
-      await dev.client.writeCoil(wireAddr, boolVal);
-      updateState(boolVal);
+    // Adquirir a trava de exclusão mútua do socket TCP
+    const releaseLock = await dev.mutex.acquire();
 
-    } else if (mType === 'holding' || mType === 'holdingregister') {
-      if (bit_index !== undefined && bit_index !== null && parseInt(bit_index) >= 0) {
-        // Modo escrita de bit em holding register:
-        // 1. Ler a word atual (read-modify-write)
-        // 2. Aplicar máscara para o bit desejado
-        // 3. Escrever a nova word
-        const bitIdx  = parseInt(bit_index);
-        let curWord   = 0;
-        try {
-          const res = await dev.client.readHoldingRegisters(wireAddr, 1);
-          if (res && res.data) curWord = res.data[0];
-        } catch(e) {
-          console.warn(`[Modbus Write] Não foi possível ler word atual em [${wireAddr}] — usando 0 como base`);
-        }
-        const newWord = Boolean(value)
-          ? (curWord |  (1 << bitIdx))  // Set bit
-          : (curWord & ~(1 << bitIdx)); // Clear bit
-        console.log(`[Modbus Write] writeRegister(addr=${wireAddr}, word=${newWord}) bit#${bitIdx}=${Boolean(value)}`);
-        // Função Modbus 06 — Write Single Register
-        await dev.client.writeRegister(wireAddr, newWord);
-        updateState(Boolean((newWord >> bitIdx) & 1));
+    try {
+      if (!dev.connected || !dev.client) {
+        updateState(value);
+        this.emit('update', this.state);
+        return true;
+      }
 
-      } else {
-        // Modo escrita de word inteira ou float (analógico com escala de decimais)
-        
-        // 1. Descobrir o formato da variável parseando o campo 'options' (JSON) do banco
-        let dataFormat = '16_int';
-        let endianness = 'ABCD';
-        let varScale   = null;
-        let varOffset  = null;
-        let varDecimals = decimals || 0;
+      if (mType === 'coil') {
+        const boolVal = Boolean(value);
+        console.log(`[Modbus Write] writeCoil(addr=${wireAddr}, val=${boolVal})`);
+        await dev.client.writeCoil(wireAddr, boolVal);
+        updateState(boolVal);
 
-        if (var_name) {
-          const vars = dev.variables || [];
-          const found = vars.find(v => v.name === var_name);
-          if (found) {
-            // options é uma string JSON — precisa fazer parse
-            let opts = {};
-            try {
-              opts = typeof found.options === 'string' ? JSON.parse(found.options || '{}') : (found.options || {});
-            } catch(e) { opts = {}; }
-
-            if (opts.data_format) dataFormat = opts.data_format;
-            if (opts.endianness)  endianness  = opts.endianness;
-            if (opts.scale  !== undefined && opts.scale  !== null && opts.scale  !== '') varScale  = parseFloat(opts.scale);
-            if (opts.offset !== undefined && opts.offset !== null && opts.offset !== '') varOffset = parseFloat(opts.offset);
-            if (found.decimals !== undefined && found.decimals !== null) varDecimals = parseInt(found.decimals) || 0;
+      } else if (mType === 'holding' || mType === 'holdingregister') {
+        if (bit_index !== undefined && bit_index !== null && parseInt(bit_index) >= 0) {
+          const bitIdx  = parseInt(bit_index);
+          let curWord   = 0;
+          try {
+            const res = await dev.client.readHoldingRegisters(wireAddr, 1);
+            if (res && res.data) curWord = res.data[0];
+          } catch(e) {
+            console.warn(`[Modbus Write] Não foi possível ler word atual em [${wireAddr}] — usando 0 como base`);
           }
-        }
-
-        const is32Bit = String(dataFormat).startsWith('32');
-        const isFloat = dataFormat === '32_float';
-
-        // 2. Reverter transformações aplicadas na leitura antes de enviar para o CLP:
-        //    Na leitura: finalValue = (rawValue * scale + offset) / 10^decimals  (para não-float)
-        //    Na escrita: rawValue  = (value * 10^decimals - offset) / scale
-        //    Nota: float 32 bits não usa decimals nem scale — é enviado diretamente
-        let valueToEncode = Number(value);
-        if (!isFloat) {
-          // Reverter offset
-          if (varOffset !== null && !isNaN(varOffset) && varOffset !== 0) {
-            valueToEncode = valueToEncode - varOffset;
-          }
-          // Reverter scale
-          if (varScale !== null && !isNaN(varScale) && varScale !== 0 && varScale !== 1) {
-            valueToEncode = valueToEncode / varScale;
-          }
-        }
-
-        console.log(`[Modbus Write] Holding fmt=${dataFormat} end=${endianness} scale=${varScale} offset=${varOffset} dec=${varDecimals} userVal=${value} encoded=${valueToEncode}`);
-
-        if (is32Bit) {
-          const valToWrite = isFloat ? valueToEncode : Math.round(valueToEncode * Math.pow(10, varDecimals));
-          const buf = Buffer.alloc(4);
-          
-          if (isFloat) buf.writeFloatBE(valToWrite, 0);
-          else if (dataFormat === '32_int')  buf.writeInt32BE(valToWrite, 0);
-          else                               buf.writeUInt32BE(valToWrite >>> 0, 0);
-
-          const A = buf[0], B = buf[1], C = buf[2], D = buf[3];
-          let finalBytes;
-          switch (endianness) {
-            case 'BADC': finalBytes = [B, A, D, C]; break;
-            case 'DCBA': finalBytes = [D, C, B, A]; break;
-            case 'CDAB': finalBytes = [C, D, A, B]; break;
-            case 'ABCD':
-            default:     finalBytes = [A, B, C, D]; break;
-          }
-          const w1 = ((finalBytes[0] << 8) | finalBytes[1]) & 0xFFFF;
-          const w2 = ((finalBytes[2] << 8) | finalBytes[3]) & 0xFFFF;
-          const words = [w1, w2];
-          
-          console.log(`[Modbus Write] FC16 writeRegisters(addr=${wireAddr}, words=[${w1}, ${w2}]) rawVal=${valToWrite}`);
-          await dev.client.writeRegisters(wireAddr, words);
+          const newWord = Boolean(value)
+            ? (curWord |  (1 << bitIdx))
+            : (curWord & ~(1 << bitIdx));
+          console.log(`[Modbus Write] writeRegister(addr=${wireAddr}, word=${newWord}) bit#${bitIdx}=${Boolean(value)}`);
+          await dev.client.writeRegister(wireAddr, newWord);
+          updateState(Boolean((newWord >> bitIdx) & 1));
 
         } else {
-          // 16 bits — FC06
-          const rawValue = Math.round(valueToEncode * Math.pow(10, varDecimals));
-          console.log(`[Modbus Write] FC06 writeRegister(addr=${wireAddr}, raw=${rawValue}) encoded=${valueToEncode}`);
-          await dev.client.writeRegister(wireAddr, rawValue);
+          let dataFormat = '16_int';
+          let endianness = 'ABCD';
+          let varScale   = null;
+          let varOffset  = null;
+          let varDecimals = decimals || 0;
+
+          if (var_name) {
+            const vars = dev.variables || [];
+            const found = vars.find(v => v.name === var_name);
+            if (found) {
+              let opts = {};
+              try {
+                opts = typeof found.options === 'string' ? JSON.parse(found.options || '{}') : (found.options || {});
+              } catch(e) { opts = {}; }
+
+              if (opts.data_format) dataFormat = opts.data_format;
+              if (opts.endianness)  endianness  = opts.endianness;
+              if (opts.scale  !== undefined && opts.scale  !== null && opts.scale  !== '') varScale  = parseFloat(opts.scale);
+              if (opts.offset !== undefined && opts.offset !== null && opts.offset !== '') varOffset = parseFloat(opts.offset);
+              if (found.decimals !== undefined && found.decimals !== null) varDecimals = parseInt(found.decimals) || 0;
+            }
+          }
+
+          const is32Bit = String(dataFormat).startsWith('32');
+          const isFloat = dataFormat === '32_float';
+
+          let valueToEncode = Number(value);
+          if (!isFloat) {
+            if (varOffset !== null && !isNaN(varOffset) && varOffset !== 0) {
+              valueToEncode = valueToEncode - varOffset;
+            }
+            if (varScale !== null && !isNaN(varScale) && varScale !== 0 && varScale !== 1) {
+              valueToEncode = valueToEncode / varScale;
+            }
+          }
+
+          console.log(`[Modbus Write] Holding fmt=${dataFormat} end=${endianness} scale=${varScale} offset=${varOffset} dec=${varDecimals} userVal=${value} encoded=${valueToEncode}`);
+
+          if (is32Bit) {
+            const valToWrite = isFloat ? valueToEncode : Math.round(valueToEncode * Math.pow(10, varDecimals));
+            const buf = Buffer.alloc(4);
+            
+            if (isFloat) buf.writeFloatBE(valToWrite, 0);
+            else if (dataFormat === '32_int')  buf.writeInt32BE(valToWrite, 0);
+            else                               buf.writeUInt32BE(valToWrite >>> 0, 0);
+
+            const A = buf[0], B = buf[1], C = buf[2], D = buf[3];
+            let finalBytes;
+            switch (endianness) {
+              case 'BADC': finalBytes = [B, A, D, C]; break;
+              case 'DCBA': finalBytes = [D, C, B, A]; break;
+              case 'CDAB': finalBytes = [C, D, A, B]; break;
+              case 'ABCD':
+              default:     finalBytes = [A, B, C, D]; break;
+            }
+            const w1 = ((finalBytes[0] << 8) | finalBytes[1]) & 0xFFFF;
+            const w2 = ((finalBytes[2] << 8) | finalBytes[3]) & 0xFFFF;
+            const words = [w1, w2];
+            
+            console.log(`[Modbus Write] FC16 writeRegisters(addr=${wireAddr}, words=[${w1}, ${w2}]) rawVal=${valToWrite}`);
+            await dev.client.writeRegisters(wireAddr, words);
+
+          } else {
+            const rawValue = Math.round(valueToEncode * Math.pow(10, varDecimals));
+            console.log(`[Modbus Write] FC06 writeRegister(addr=${wireAddr}, raw=${rawValue}) encoded=${valueToEncode}`);
+            await dev.client.writeRegister(wireAddr, rawValue);
+          }
+
+          updateState(Number(value));
         }
-
-        updateState(Number(value));
+      } else {
+        throw new Error(`Tipo Modbus '${mType}' não suporta escrita direta.`);
       }
-    } else {
-      throw new Error(`Tipo Modbus '${mType}' não suporta escrita direta. Use 'coil' ou 'holding'.`);
-    }
 
-    // Emitir update imediato para refletir a escrita no frontend antes do próximo poll
-    this.emit('update', this.state);
-    return true;
+      this.emit('update', this.state);
+      return true;
+
+    } catch(err) {
+      console.error(`[Modbus Write Error] ID ${deviceId}: ${err.message}`);
+      this.resetDeviceConnection(deviceId, `Falha na escrita: ${err.message}`);
+      throw err;
+
+    } finally {
+      releaseLock();
+    }
   }
 
   // ---------------------------------------------------------------------------
