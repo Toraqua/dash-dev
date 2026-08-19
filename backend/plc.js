@@ -246,12 +246,9 @@ class PLCService extends EventEmitter {
         dev.connected  = true;
         dev.retryCount = 0; // Resetar backoff após conexão bem-sucedida
 
-        // Parar poll anterior (se existia) e iniciar novo ciclo
-        if (dev.intervalId) clearInterval(dev.intervalId);
-        dev.intervalId = setInterval(
-          () => this.pollDevice(deviceId),
-          dev.info.polling_interval_ms || 1000
-        );
+        // Parar poll anterior (se existia) e iniciar o ciclo de polling
+        if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
+        this.pollDevice(deviceId);
       })
       .catch(e => {
         console.error(`[Modbus] Falha ao conectar ID ${deviceId}: ${e.message}`);
@@ -602,7 +599,7 @@ class PLCService extends EventEmitter {
       dev.connected = false;
 
       // Parar ciclo de polling e fechar conexão
-      if (dev.intervalId) clearInterval(dev.intervalId);
+      if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
       try { if (dev.client) dev.client.close(); } catch(_) {}
 
       // Agendar reconexão com backoff exponencial
@@ -612,8 +609,18 @@ class PLCService extends EventEmitter {
       dev.retryTimeout = setTimeout(() => this.connectDevice(deviceId), delay);
 
     } finally {
-      // Sempre liberar o guard de polling ao final do ciclo, mesmo em caso de erro
+      // Liberar o guard de polling ao final do ciclo
       dev.isPolling = false;
+
+      // Se o dispositivo continua conectado, agendar o próximo ciclo de poll
+      // apenas APÓS o término do ciclo atual (evita fisicamente qualquer sobreposição)
+      if (dev.connected) {
+        if (dev.pollTimeout) clearTimeout(dev.pollTimeout);
+        dev.pollTimeout = setTimeout(
+          () => this.pollDevice(deviceId),
+          dev.info.polling_interval_ms || 1000
+        );
+      }
     }
   }
 
