@@ -1303,12 +1303,17 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
               breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 767, xxs: 0 }}
               cols={{ lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }}
               rowHeight={100}
-              isDraggable={true}
+              isDraggable={isEditing}
               isResizable={isEditing}
               onLayoutChange={handleLayoutChange}
               onDragStop={() => {
                 if (!isEditing) {
                   // Efeito mola: remonta o grid com layout original salvo
+                  setSnapKey(k => k + 1);
+                }
+              }}
+              onResizeStop={() => {
+                if (!isEditing) {
                   setSnapKey(k => k + 1);
                 }
               }}
@@ -1321,7 +1326,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
               y: l.y !== undefined ? l.y : Math.floor((index * 3) / 12) * 2,
               w: l.w || 3,
               h: l.h || 2,
-              minW: 1, minH: 2
+              minW: 1, minH: 2,
+              isDraggable: isEditing,
+              isResizable: isEditing
             };
             let opts = {};
             try {
@@ -1764,7 +1771,9 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
               y: l.y !== undefined ? l.y : Math.floor((index * 4) / 12) * 3 + 10,
               w: l.w || 4,
               h: l.h || 3,
-              minW: 1, minH: 2
+              minW: 1, minH: 2,
+              isDraggable: isEditing,
+              isResizable: isEditing
             };
             return (
               <div key={'cam-' + c.id.toString()} data-grid={gridProps} className="card" style={{ padding: '0', overflow: 'hidden' }}>
