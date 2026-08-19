@@ -388,14 +388,42 @@ class PLCService extends EventEmitter {
       const discreteBlocks = buildBlocks(discreteVars, () => 1);
 
       // -----------------------------------------------------------------------
-      // FASE 2: Executar leituras em bloco com Fallback Individual inteligente
+      // FASE 2: Executar leituras em bloco ou diretas (Adaptativo)
+      //
+      // Se o CLP/Gateway (ex: via VPN Tailscale) não suportar pacotes PDU grandes
+      // e der Timeout na leitura em bloco, o sistema ativa dev.disableBlockRead = true.
+      // Nos ciclos seguintes, o sistema lê as variáveis diretamente de forma individual,
+      // rodando sem nenhum atraso de timeout (~15ms por variável).
       // -----------------------------------------------------------------------
       const blockData = new Map(); // key: `${type}:${startAddr}` → array de dados
       const individualData = new Map(); // key: `${type}:${addr}` → array de dados
 
       let successfulReadsThisCycle = 0;
 
+      const readVarDirectly = async (type, v, readFn) => {
+        const addr = parseInt(v.modbus_address) || 0;
+        const nRegs = (type === 'holding' || type === 'input') ? getNumRegsForVar(v) : 1;
+        try {
+          const res = await readFn(addr, nRegs);
+          if (res && res.data) {
+            individualData.set(`${type}:${addr}`, res.data);
+            successfulReadsThisCycle++;
+          }
+        } catch(err) {
+          console.warn(`[Modbus Warning] Variável '${v.name}' [${type}#${addr}] com falha na leitura: ${err.message}`);
+        }
+      };
+
       const readBlock = async (type, block, readFn) => {
+        // Se a leitura por bloco foi desativada para este dispositivo ou tipo (por timeout prévio),
+        // ou se o bloco contém apenas 1 variável, lê diretamente sem tentar o bloco grande.
+        if (dev.disableBlockRead || block.vars.length <= 1) {
+          for (const v of block.vars) {
+            await readVarDirectly(type, v, readFn);
+          }
+          return;
+        }
+
         const count = block.end - block.start;
         try {
           const res = await readFn(block.start, count);
@@ -404,21 +432,13 @@ class PLCService extends EventEmitter {
             successfulReadsThisCycle += block.vars.length;
           }
         } catch(e) {
-          console.warn(`[Modbus Warning] Bloco ${type}[${block.start}..${block.end-1}] falhou: ${e.message}. Tentando leitura individual de fallback...`);
-          
-          // Fallback: Tentar ler cada variável do bloco separadamente para isolar o endereço com problema
+          console.warn(`[Modbus Warning] Bloco ${type}[${block.start}..${block.end-1}] falhou: ${e.message}. Ativando modo de leitura direta por variável...`);
+          // Se deu timeout em bloco grande, memorizar para não atrasar os próximos ciclos
+          dev.disableBlockRead = true;
+
+          // Fallback imediato: ler cada variável do bloco separadamente
           for (const v of block.vars) {
-            const addr = parseInt(v.modbus_address) || 0;
-            const nRegs = (type === 'holding' || type === 'input') ? getNumRegsForVar(v) : 1;
-            try {
-              const singleRes = await readFn(addr, nRegs);
-              if (singleRes && singleRes.data) {
-                individualData.set(`${type}:${addr}`, singleRes.data);
-                successfulReadsThisCycle++;
-              }
-            } catch(singleErr) {
-              console.warn(`[Modbus Warning] Variável '${v.name}' [${type}#${addr}] com falha individual: ${singleErr.message}`);
-            }
+            await readVarDirectly(type, v, readFn);
           }
         }
       };
