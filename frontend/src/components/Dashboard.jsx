@@ -1454,7 +1454,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                           <XAxis dataKey="time" hide />
                           <YAxis domain={['auto', 'auto']} hide />
                           <Tooltip contentStyle={{ background: '#0b0f19', borderColor: 'var(--border-color)', borderRadius: '8px' }} />
-                          <Line type="monotone" dataKey="val" stroke={v.color || '#3b82f6'} strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="val" stroke={v.color || '#3b82f6'} strokeWidth={2} dot={false} isAnimationActive={false} />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -1465,7 +1465,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                     <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
-                          <Pie data={[{ name: 'Valor', value: Math.min(Math.max(val, 0), opts.max_val || 100) }, { name: 'Restante', value: Math.max((opts.max_val || 100) - Math.min(Math.max(val, 0), opts.max_val || 100), 0) }]} cx="50%" cy="50%" innerRadius={28} outerRadius={42} paddingAngle={4} dataKey="value">
+                          <Pie data={[{ name: 'Valor', value: Math.min(Math.max(val, 0), opts.max_val || 100) }, { name: 'Restante', value: Math.max((opts.max_val || 100) - Math.min(Math.max(val, 0), opts.max_val || 100), 0) }]} cx="50%" cy="50%" innerRadius={28} outerRadius={42} paddingAngle={4} dataKey="value" isAnimationActive={false}>
                             <Cell key="val" fill={v.color || '#06b6d4'} />
                             <Cell key="rest" fill="rgba(255,255,255,0.08)" />
                           </Pie>
