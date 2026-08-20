@@ -59,7 +59,7 @@ function initDb() {
     insertUser.run('operador', '1234', 'operator');
     insertUser.finalize();
 
-    // Tabela de Dispositivos (PLCs)
+    // Tabela de Dispositivos (PLCs) — Sem dispositivo padrão: o usuário cria seus próprios
     db.run(`CREATE TABLE IF NOT EXISTS devices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -69,11 +69,7 @@ function initDb() {
       status TEXT DEFAULT 'Offline'
     )`);
 
-    const insertDevice = db.prepare(`INSERT OR IGNORE INTO devices (id, name, ip_address, port, polling_interval_ms) VALUES (?, ?, ?, ?, ?)`);
-    insertDevice.run(1, 'CLP Principal (Elevatória)', '127.0.0.1', 502, 1000);
-    insertDevice.finalize();
-
-    // Tabela de Variáveis Monitoradas (Modbus)
+    // Tabela de Variáveis Monitoradas (Modbus) — Sem variáveis padrão: o usuário cria as suas
     db.run(`CREATE TABLE IF NOT EXISTS variables (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       device_id INTEGER,
@@ -95,30 +91,6 @@ function initDb() {
     // Ensure options column exists on existing databases
     db.run(`ALTER TABLE variables ADD COLUMN options TEXT DEFAULT '{}'`, () => {});
 
-    const insertVar = db.prepare(`INSERT OR IGNORE INTO variables (device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, grid_layout, color, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    // Variáveis Iniciais (Supervisão)
-    insertVar.run(1, 'pump1', 'Bomba 1', 'boolean', '', 0, 'coil', 0, 'switch', JSON.stringify({x: 0, y: 0, w: 3, h: 2}), '#ef4444', 'supervision');
-    insertVar.run(1, 'pump2', 'Bomba 2', 'boolean', '', 1, 'coil', 0, 'switch', JSON.stringify({x: 3, y: 0, w: 3, h: 2}), '#f59e0b', 'supervision');
-    insertVar.run(1, 'level', 'Nível Atual', 'analog', 'm', 0, 'holding', 2, 'tank', JSON.stringify({x: 6, y: 0, w: 3, h: 2}), '#3b82f6', 'supervision');
-    
-    // Variáveis de Engenharia (Setpoints, PIDs, Fatores)
-    insertVar.run(1, 'nivel_liga_bomba', 'Nível Liga Bomba', 'analog', 'm', 10, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'nivel_desliga_bomba', 'Nível Desliga Bomba', 'analog', 'm', 11, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'setpoint', 'Setpoint', 'analog', 'm', 12, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'tempo_comutacao', 'Tempo de Comutação', 'analog', 's', 13, 'holding', 0, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'vel_minima', 'Velocidade Mínima', 'analog', 'Hz', 14, 'holding', 1, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'vel_maxima', 'Velocidade Máxima', 'analog', 'Hz', 15, 'holding', 1, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'pid_p', 'Proporcional', 'analog', '', 16, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'pid_i', 'Integral', 'analog', '', 17, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'pid_d', 'Derivativo', 'analog', '', 18, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'nivel_max_vazao', 'Nível Máx. Medidor Vazão', 'analog', 'm', 19, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'nivel_max_sensor', 'Nível Máx. Sensor Nível', 'analog', 'm', 20, 'holding', 2, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'fator_corrente', 'Fator Mult. Corrente', 'analog', '', 21, 'holding', 3, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'fator_freq', 'Fator Mult. Frequência', 'analog', '', 22, 'holding', 3, 'input', JSON.stringify({}), '#000000', 'engineering');
-    insertVar.run(1, 'fator_vazao', 'Fator Incr. Tot. Vazão', 'analog', '', 23, 'holding', 3, 'input', JSON.stringify({}), '#000000', 'engineering');
-
-    // Simulated starting configuration
-    insertVar.finalize();
 
     // Tabela de Histórico de Variáveis
     db.run(`CREATE TABLE IF NOT EXISTS variable_history (
@@ -140,7 +112,7 @@ function initDb() {
     )`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_alarm_history_trig ON alarm_history(trigger_time)`);
 
-    // Tabela de Câmeras (RTSP)
+    // Tabela de Câmeras (RTSP) — Sem câmera padrão: o usuário cadastra as suas
     db.run(`CREATE TABLE IF NOT EXISTS cameras (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -148,13 +120,7 @@ function initDb() {
       grid_layout TEXT
     )`);
     db.run(`ALTER TABLE cameras ADD COLUMN grid_layout TEXT`, () => {});
-    
-    const insertCam = db.prepare(`INSERT OR IGNORE INTO cameras (id, name, url) VALUES (?, ?, ?)`);
-    insertCam.run(1, 'Casa de Bombas - Visão Geral', 'http://simulated-stream/stream.m3u8');
-    insertCam.finalize();
 
-    // Remover a Câmera Painel Elétrico por padrão se não tiver URL definida
-    db.run(`DELETE FROM cameras WHERE name = 'Câmera Painel Elétrico' AND (url = '' OR url IS NULL)`);
 
     // Tabela de Cadastro de Alarmes
     db.run(`CREATE TABLE IF NOT EXISTS alarm_configs (
