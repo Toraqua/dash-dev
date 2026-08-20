@@ -460,7 +460,24 @@ function App() {
         </div>
 
         {activeTab === 'config' && (
-          <ConfigPanel socket={socket} variables={variables} cameras={cameras} devices={devices} generalConfig={generalConfig} onRefresh={fetchData} onTestStaleMode={() => setLastReadTimes({})} />
+          <ConfigPanel
+            socket={socket}
+            variables={variables}
+            cameras={cameras}
+            devices={devices}
+            generalConfig={generalConfig}
+            onRefresh={fetchData}
+            onTestStaleMode={() => {
+              const stale8DaysMs = Date.now() - (8 * 24 * 60 * 60 * 1000);
+              const testTimes = {};
+              variables.forEach(v => {
+                testTimes[v.id] = stale8DaysMs;
+                testTimes[v.name] = stale8DaysMs;
+                if (v.display_name) testTimes[v.display_name] = stale8DaysMs;
+              });
+              setLastReadTimes(testTimes);
+            }}
+          />
         )}
 
         {activeTab === 'gateway' && (
