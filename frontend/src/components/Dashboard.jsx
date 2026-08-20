@@ -805,7 +805,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                 } catch(e) {}
 
                 const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
-                const staleMs = lastReadTimes[v.name] || lastReadTimes[v.display_name];
+                const staleMs = lastReadTimes[v.id] || lastReadTimes[v.name] || lastReadTimes[v.display_name];
                 const isStaleOverAWeek = !staleMs || (Date.now() - staleMs) >= 604800000;
                 let displayVal = typeof val === 'number' ? val.toFixed(v.decimals || 0) : val;
 
@@ -1093,7 +1093,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                                 }
                               }
 
-                              const targetStaleMs = targetV ? (lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'LIGADO') : (item.label_off || 'DESLIGADO'));
+                              const targetStaleMs = targetV ? (lastReadTimes[targetV.id] || lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'LIGADO') : (item.label_off || 'DESLIGADO'));
                               const activeColor = isBitActive ? (item.color_on || v.color || '#10b981') : (item.color_off || 'var(--text-secondary)');
                               const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
                               const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
@@ -1157,7 +1157,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                                 isBitActive = Boolean((mainWordVal >> (item.bit || 0)) & 1);
                               }
 
-                              const targetStaleMs = targetV ? (lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL'));
+                              const targetStaleMs = targetV ? (lastReadTimes[targetV.id] || lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL'));
                               const activeColor = isBitActive ? (item.color_on || v.color || '#ef4444') : (item.color_off || 'var(--text-secondary)');
                               const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
                               const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
@@ -1292,7 +1292,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                     {v.widget_type !== 'header' && (
                       <div style={{ position: 'absolute', bottom: '6px', right: '10px', fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '3px', pointerEvents: 'none' }}>
                         <Clock size={10} />
-                        <TimeAgo lastMs={lastReadTimes[v.name] || lastReadTimes[v.display_name]} />
+                        <TimeAgo lastMs={lastReadTimes[v.id] || lastReadTimes[v.name] || lastReadTimes[v.display_name]} />
                       </div>
                     )}
                   </div>
@@ -1358,7 +1358,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
             } catch(e) {}
 
             const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
-            const staleMs = lastReadTimes[v.name] || lastReadTimes[v.display_name];
+            const staleMs = lastReadTimes[v.id] || lastReadTimes[v.name] || lastReadTimes[v.display_name];
             const isStaleOverAWeek = !staleMs || (Date.now() - staleMs) >= 604800000;
             let displayVal = typeof val === 'number' ? val.toFixed(v.decimals || 0) : val;
 
@@ -1676,7 +1676,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                             isBitActive = Boolean((mainWordVal >> (item.bit || 0)) & 1);
                           }
 
-                          const targetStaleMs = targetV ? (lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL'));
+                          const targetStaleMs = targetV ? (lastReadTimes[targetV.id] || lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL'));
                           const activeColor = isBitActive ? (item.color_on || v.color || '#ef4444') : (item.color_off || 'var(--text-secondary)');
                           const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
                           const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
@@ -1811,7 +1811,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                 {v.widget_type !== 'header' && (
                   <div style={{ position: 'absolute', bottom: '6px', right: '10px', fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '3px', pointerEvents: 'none' }}>
                     <Clock size={10} />
-                    <TimeAgo lastMs={lastReadTimes[v.name] || lastReadTimes[v.display_name]} />
+                    <TimeAgo lastMs={lastReadTimes[v.id] || lastReadTimes[v.name] || lastReadTimes[v.display_name]} />
                   </div>
                 )}
               </div>

@@ -155,14 +155,16 @@ class PLCService extends EventEmitter {
   // de leitura bem-sucedida para cada variável (Retentividade Real).
   // ---------------------------------------------------------------------------
   loadLastReadTimesFromDb() {
-    db.all(`SELECT variable_id, MAX(timestamp) as last_ts FROM variable_history GROUP BY variable_id`, [], (err, rows) => {
+    db.all(`SELECT v.id, v.name, v.display_name, MAX(vh.timestamp) as last_ts FROM variable_history vh JOIN variables v ON v.id = vh.variable_id GROUP BY vh.variable_id`, [], (err, rows) => {
       if (!err && rows) {
         rows.forEach(r => {
-          if (r.variable_id && r.last_ts) {
+          if (r.last_ts) {
             const dStr = r.last_ts.includes('Z') || r.last_ts.includes('+') ? r.last_ts : r.last_ts.replace(' ', 'T') + 'Z';
             const ms = new Date(dStr).getTime();
             if (!isNaN(ms)) {
-              this.lastReadTimes[r.variable_id] = ms;
+              this.lastReadTimes[r.id] = ms;
+              if (r.name) this.lastReadTimes[r.name] = ms;
+              if (r.display_name) this.lastReadTimes[r.display_name] = ms;
             }
           }
         });
