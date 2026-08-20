@@ -460,7 +460,7 @@ function App() {
         </div>
 
         {activeTab === 'config' && (
-          <ConfigPanel socket={socket} variables={variables} cameras={cameras} devices={devices} generalConfig={generalConfig} onRefresh={fetchData} />
+          <ConfigPanel socket={socket} variables={variables} cameras={cameras} devices={devices} generalConfig={generalConfig} onRefresh={fetchData} onTestStaleMode={() => setLastReadTimes({})} />
         )}
 
         {activeTab === 'gateway' && (

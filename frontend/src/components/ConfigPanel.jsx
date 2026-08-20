@@ -31,7 +31,7 @@ const BLOCK_TYPES = [
 ];
 
 
-function ConfigPanel({ socket, variables = [], cameras = [], devices = [], generalConfig = {}, onRefresh }) {
+function ConfigPanel({ socket, variables = [], cameras = [], devices = [], generalConfig = {}, onRefresh, onTestStaleMode }) {
   const [activeTab, setActiveTab] = useState('variables');
 
   // Wizard State
@@ -1575,6 +1575,30 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                   <RefreshCw size={16} /> Executar Limpeza Manual Agora
                 </button>
               </div>
+            </div>
+
+            {/* Bloco de Diagnóstico: Testar modo "Sem dados" */}
+            <div style={{ marginTop: '2rem', padding: '1.5rem', background: 'rgba(251,191,36,0.05)', borderRadius: '12px', border: '1px solid rgba(251,191,36,0.2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                <span style={{ fontSize: '1.3rem' }}>🧪</span>
+                <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>Diagnóstico — Testar Aviso "Sem dados"</h4>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.5' }}>
+                Simula a condição de <strong style={{ color: '#fbbf24' }}>"Sem dados"</strong> em todos os widgets do painel.
+                Isso ocorre automaticamente quando um dispositivo fica <strong>mais de 7 dias</strong> sem enviar telemetria.
+                O aviso some sozinho quando a comunicação com o CLP for restabelecida.
+              </p>
+              <button
+                type="button"
+                className="btn"
+                style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.35)', gap: '0.5rem' }}
+                onClick={() => {
+                  if (onTestStaleMode) onTestStaleMode();
+                  showNotification('Modo "Sem dados" ativado! Navegue até Supervisão ou Engenharia para ver o resultado. A comunicação com o CLP irá restaurar automaticamente.', 'info');
+                }}
+              >
+                🔬 Simular "Sem dados" agora
+              </button>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
