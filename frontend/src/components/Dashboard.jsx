@@ -79,6 +79,22 @@ function BitButtonWidget({ variable, plcStateValue, opts, onWrite, isStale }) {
   const activeColor = displayActive ? colorOn : colorOff;
   const activeText  = isStale ? 'Sem dados' : (displayActive ? labelOn : labelOff);
 
+  if (isStale) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
+        <SemDadosBadge />
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.4rem', textAlign: 'center' }}>
+          {mode === 'toggle'        ? 'Modo: Alternar (Toggle)'         :
+           mode === 'set'           ? 'Modo: Set Bit (Ligar)'           :
+           mode === 'reset'         ? 'Modo: Reset Bit (Desligar)'      :
+           mode === 'momentary_on'  ? 'Modo: Pulsador (Norm. Aberto)'   :
+                                      'Modo: Pulsador (Norm. Fechado)'}
+          {(variable.modbus_type === 'holding' || variable.modbus_type === 'input') && opts.bit_index >= 0 && ` | Bit #${opts.bit_index}`}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
       <button
@@ -182,6 +198,22 @@ function BitSwitchWidget({ variable, plcStateValue, opts, onWrite, isStale }) {
   const activeColor = displayActive ? colorOn : colorOff;
   const activeText  = isStale ? 'Sem dados' : (displayActive ? labelOn : labelOff);
   const cursorStyle = isPending ? 'wait' : (isReadOnly ? 'default' : 'pointer');
+
+  if (isStale) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+        <SemDadosBadge />
+        {!isReadOnly && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem', textAlign: 'center' }}>
+            {mode === 'toggle'       ? 'Toggle'        :
+             mode === 'set'          ? 'Set Bit'       :
+             mode === 'reset'        ? 'Reset Bit'     :
+             mode === 'momentary_on' ? 'Pulsador (NA)' : 'Pulsador (NF)'}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
@@ -419,9 +451,9 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
     return () => clearInterval(timer);
   }, []);
 
-  if (!lastMs) return <span>Sem dados</span>;
+  if (!lastMs) return <span>— sem dados</span>;
   const diffMs = nowMs - lastMs;
-  if (diffMs >= 604800000) return <span>Sem dados</span>;
+  if (diffMs >= 604800000) return <span>— sem dados</span>;
   const seconds = Math.max(0, Math.floor(diffMs / 1000));
   if (seconds < 60) return <span>Há {seconds} s</span>;
   const minutes = Math.floor(seconds / 60);
@@ -435,6 +467,28 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
   const years = Math.floor(days / 365);
   return <span>Há {years} {years === 1 ? 'ano' : 'anos'}</span>;
 });
+
+// Badge padronizado para ausência de dados (telemetria > 7 dias)
+const SemDadosBadge = () => (
+  <span style={{
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.3rem',
+    padding: '0.2rem 0.55rem',
+    borderRadius: '20px',
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    color: 'rgba(148,163,184,0.9)',
+    background: 'rgba(148,163,184,0.08)',
+    border: '1px solid rgba(148,163,184,0.18)',
+    whiteSpace: 'nowrap',
+    userSelect: 'none',
+  }}>
+    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'rgba(148,163,184,0.5)', display: 'inline-block', flexShrink: 0 }} />
+    sem dados
+  </span>
+);
 
 function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
   const { width, containerRef } = useContainerWidth();
@@ -809,7 +863,6 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                 const staleMs = lastReadTimes[v.name] || lastReadTimes[v.display_name];
                 const isStaleOverAWeek = !staleMs || (Date.now() - staleMs) >= 604800000;
                 let displayVal = typeof val === 'number' ? val.toFixed(v.decimals || 0) : val;
-                if (isStaleOverAWeek) displayVal = 'Sem dados';
 
                 const mType = String(v.modbus_type || '').toLowerCase();
                 let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
@@ -857,10 +910,14 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       {/* 1. VALUE / GAUGE DE VALOR */}
                       {(v.widget_type === 'value' || v.widget_type === 'value_gauge') && (
                         <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                            {displayVal}
-                            <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
-                          </div>
+                          {isStaleOverAWeek ? (
+                            <SemDadosBadge />
+                          ) : (
+                            <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                              {displayVal}
+                              <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -899,10 +956,14 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                               </svg>
                               
                               <div style={{ position: 'absolute', bottom: '10px', textAlign: 'center', width: '100%' }}>
-                                <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white', lineHeight: '1' }}>
-                                  {displayVal}
-                                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
-                                </div>
+                                {isStaleOverAWeek ? (
+                                  <SemDadosBadge />
+                                ) : (
+                                  <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white', lineHeight: '1' }}>
+                                    {displayVal}
+                                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
+                                  </div>
+                                )}
                               </div>
 
                               <div style={{ position: 'absolute', bottom: '-8px', left: '10px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
@@ -967,7 +1028,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                             </PieChart>
                           </ResponsiveContainer>
                           <div style={{ position: 'absolute', fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>
-                            {displayVal}{v.unit}
+                            {isStaleOverAWeek ? <SemDadosBadge /> : <>{displayVal}{v.unit}</>}
                           </div>
                         </div>
                       )}
@@ -1018,7 +1079,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                               </div>
                             </div>
                             <div style={{ fontSize: '2rem', fontWeight: 'bold', color: v.color || '#0ea5e9', whiteSpace: 'nowrap' }}>
-                              {displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
+                              {isStaleOverAWeek ? <SemDadosBadge /> : <>{displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span></>}
                             </div>
                           </div>
                         );
@@ -1028,8 +1089,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       {(v.widget_type === 'input' || v.widget_type === 'write_button') && (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '0 0.5rem', width: '100%' }}>
                           <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: v.color || 'var(--text-primary)', marginBottom: '0.4rem' }}>
-                            {displayVal}
-                            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>{v.unit}</span>
+                            {isStaleOverAWeek ? <SemDadosBadge /> : <>{displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>{v.unit}</span></>}
                           </div>
                           <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
                             <input 
@@ -1054,9 +1114,9 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       {/* 8. HORIZONTAL BAR */}
                       {v.widget_type === 'horizontal_bar' && (
                         <div style={{ width: '100%', padding: '0 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center', height: '100%' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', alignItems: 'center' }}>
                             <span style={{ color: 'var(--text-secondary)' }}>Progresso / Escala</span>
-                            <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>
+                            {isStaleOverAWeek ? <SemDadosBadge /> : <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>}
                           </div>
                           <div style={{ width: '100%', height: '14px', background: 'rgba(0,0,0,0.4)', borderRadius: '7px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
                             <div style={{ width: `${Math.min(Math.max((typeof val === 'number' ? val : 0), 0), 100)}%`, height: '100%', background: v.color || '#3b82f6', borderRadius: '7px', transition: 'width 0.5s ease' }}></div>
@@ -1358,7 +1418,6 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
             const staleMs = lastReadTimes[v.name] || lastReadTimes[v.display_name];
             const isStaleOverAWeek = !staleMs || (Date.now() - staleMs) >= 604800000;
             let displayVal = typeof val === 'number' ? val.toFixed(v.decimals || 0) : val;
-            if (isStaleOverAWeek) displayVal = 'Sem dados';
 
             const mType = String(v.modbus_type || '').toLowerCase();
             let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
@@ -1406,10 +1465,14 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   {/* 1. VALUE / GAUGE DE VALOR */}
                   {(v.widget_type === 'value' || v.widget_type === 'value_gauge') && (
                     <div style={{ textAlign: 'center' }}>
-                      <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                        {displayVal}
-                        <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
-                      </div>
+                      {isStaleOverAWeek ? (
+                        <SemDadosBadge />
+                      ) : (
+                        <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                          {displayVal}
+                          <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1452,10 +1515,14 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           
                           {/* Value Text centered inside arc */}
                           <div style={{ position: 'absolute', bottom: '10px', textAlign: 'center', width: '100%' }}>
-                            <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white', lineHeight: '1' }}>
-                              {displayVal}
-                              <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
-                            </div>
+                            {isStaleOverAWeek ? (
+                              <SemDadosBadge />
+                            ) : (
+                              <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white', lineHeight: '1' }}>
+                                {displayVal}
+                                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Min and Max Labels at Arc ends */}
@@ -1521,7 +1588,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                         </PieChart>
                       </ResponsiveContainer>
                       <div style={{ position: 'absolute', fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>
-                        {displayVal}{v.unit}
+                        {isStaleOverAWeek ? <SemDadosBadge /> : <>{displayVal}{v.unit}</>}
                       </div>
                     </div>
                   )}
@@ -1572,7 +1639,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           </div>
                         </div>
                         <div style={{ fontSize: '2rem', fontWeight: 'bold', color: v.color || '#0ea5e9', whiteSpace: 'nowrap' }}>
-                          {displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
+                          {isStaleOverAWeek ? <SemDadosBadge /> : <>{displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span></>}
                         </div>
                       </div>
                     );
@@ -1582,8 +1649,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   {(v.widget_type === 'input' || v.widget_type === 'write_button') && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '0 0.5rem', width: '100%' }}>
                       <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: v.color || 'var(--text-primary)', marginBottom: '0.4rem' }}>
-                        {displayVal}
-                        <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>{v.unit}</span>
+                        {isStaleOverAWeek ? <SemDadosBadge /> : <>{displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>{v.unit}</span></>}
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
                         <input 
@@ -1608,9 +1674,9 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   {/* 8. HORIZONTAL BAR */}
                   {v.widget_type === 'horizontal_bar' && (
                     <div style={{ width: '100%', padding: '0 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center', height: '100%' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', alignItems: 'center' }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Progresso / Escala</span>
-                        <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>
+                        {isStaleOverAWeek ? <SemDadosBadge /> : <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>}
                       </div>
                       <div style={{ width: '100%', height: '14px', background: 'rgba(0,0,0,0.4)', borderRadius: '7px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
                         <div style={{ width: `${Math.min(Math.max((typeof val === 'number' ? val : 0), 0), 100)}%`, height: '100%', background: v.color || '#3b82f6', borderRadius: '7px', transition: 'width 0.5s ease' }}></div>
@@ -1848,3 +1914,4 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
 }
 
 export default Dashboard;
+
