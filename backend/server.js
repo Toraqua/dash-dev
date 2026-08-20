@@ -41,16 +41,17 @@ io.on('connection', (socket) => {
   console.log('Cliente conectado:', socket.id);
   
   socket.emit('config', plc.config);
-  socket.emit('update', plc.state);
+  socket.emit('update', { state: plc.state, lastReadTimes: plc.lastReadTimes });
 
   socket.on('disconnect', () => {
     console.log('Cliente desconectado:', socket.id);
   });
 });
 
-plc.on('update', (state) => {
-  io.emit('update', state);
-  gatewayService.publishTelemetry(state);
+plc.on('update', (data) => {
+  io.emit('update', data);
+  // Compatibilidade com o gateway que espera apenas o estado
+  gatewayService.publishTelemetry(data.state || data);
 });
 
 plc.on('alarms_updated', () => {

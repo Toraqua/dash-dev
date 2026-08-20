@@ -43,6 +43,7 @@ function App() {
   const [cameras, setCameras] = useState([]);
   const [devices, setDevices] = useState([]);
   const [activeAlarmsCount, setActiveAlarmsCount] = useState(0);
+  const [lastReadTimes, setLastReadTimes] = useState({});
 
   const [generalConfig, setGeneralConfig] = useState(() => {
     try {
@@ -241,7 +242,10 @@ function App() {
     });
 
     newSocket.on('update', (data) => {
-      setPlcState(prev => ({ ...prev, ...data }));
+      // payload data agora é { state, lastReadTimes }
+      if (data.state) setPlcState(prev => ({ ...prev, ...data.state }));
+      else setPlcState(prev => ({ ...prev, ...data })); // compatibilidade legada
+      if (data.lastReadTimes) setLastReadTimes(data.lastReadTimes);
     });
 
     newSocket.on('alarms_updated', () => {
@@ -448,11 +452,11 @@ function App() {
         </div>
 
         <div style={{ display: activeTab === 'dashboard' ? 'contents' : 'none' }}>
-          <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} variables={variables.filter(v => v.category === 'supervision' || !v.category)} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
+          <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'supervision' || !v.category)} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
         </div>
 
         <div style={{ display: activeTab === 'engineering' ? 'contents' : 'none' }}>
-          <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} variables={variables.filter(v => v.category === 'engineering')} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
+          <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'engineering')} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
         </div>
 
         {activeTab === 'config' && (

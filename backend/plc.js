@@ -128,6 +128,9 @@ class PLCService extends EventEmitter {
     // Mapa de último timestamp de gravação no histórico por variável: { variable_id: ms }
     this.lastHistoryLogTime = {};
 
+    // Mapa de último timestamp de leitura Modbus BEM SUCEDIDA por variável (Retentivo): { id/name: ms }
+    this.lastReadTimes = {};
+
     // Conjunto de IDs de alarmes atualmente ativos (checagem em memória para alta performance)
     this.activeAlarmsSet = new Set();
 
@@ -137,13 +140,34 @@ class PLCService extends EventEmitter {
 
   // ---------------------------------------------------------------------------
   // init — Ponto de entrada após construção.
-  // Carrega configurações, alarmes ativos e inicia dispositivos.
+  // Carrega configurações, alarmes ativos, histórico de timestamps e inicia dispositivos.
   // ---------------------------------------------------------------------------
   init() {
     this.loadGeneralConfig();
     this.loadActiveAlarms();
+    this.loadLastReadTimesFromDb();
     this.reloadDevices();
     this.startWatchdog();
+  }
+
+  // ---------------------------------------------------------------------------
+  // loadLastReadTimesFromDb — Carrega do banco de dados o último timestamp
+  // de leitura bem-sucedida para cada variável (Retentividade Real).
+  // ---------------------------------------------------------------------------
+  loadLastReadTimesFromDb() {
+    db.all(`SELECT variable_id, MAX(timestamp) as last_ts FROM variable_history GROUP BY variable_id`, [], (err, rows) => {
+      if (!err && rows) {
+        rows.forEach(r => {
+          if (r.variable_id && r.last_ts) {
+            const dStr = r.last_ts.includes('Z') || r.last_ts.includes('+') ? r.last_ts : r.last_ts.replace(' ', 'T') + 'Z';
+            const ms = new Date(dStr).getTime();
+            if (!isNaN(ms)) {
+              this.lastReadTimes[r.variable_id] = ms;
+            }
+          }
+        });
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -260,6 +284,10 @@ class PLCService extends EventEmitter {
               }
               if (v.display_name && this.state[v.display_name] === undefined) {
                 this.state[v.display_name] = v.type === 'analog' ? 0.0 : false;
+              }
+              if (this.lastReadTimes[v.id]) {
+                this.lastReadTimes[v.name] = this.lastReadTimes[v.id];
+                if (v.display_name) this.lastReadTimes[v.display_name] = this.lastReadTimes[v.id];
               }
             });
           }
@@ -677,6 +705,13 @@ class PLCService extends EventEmitter {
         this.state[v.name] = finalValue;
         if (v.display_name) this.state[v.display_name] = finalValue;
 
+        if (readSuccess) {
+          const nowMs = Date.now();
+          this.lastReadTimes[v.id] = nowMs;
+          this.lastReadTimes[v.name] = nowMs;
+          if (v.display_name) this.lastReadTimes[v.display_name] = nowMs;
+        }
+
         // -------------------------------------------------------------------
         // Persistência no histórico
         // -------------------------------------------------------------------
@@ -768,8 +803,8 @@ class PLCService extends EventEmitter {
         }
       }
 
-      // Emitir o estado completo para o frontend via WebSocket
-      this.emit('update', this.state);
+      // Emitir o estado completo e timestamps retentivos para o frontend via WebSocket
+      this.emit('update', { state: this.state, lastReadTimes: this.lastReadTimes });
 
     } catch (e) {
       console.error(`[Modbus Critical] Erro na leitura do dispositivo ID ${deviceId}: ${e.message}`);

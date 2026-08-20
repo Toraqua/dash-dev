@@ -23,7 +23,7 @@ import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Tabl
 //   'momentary_on' — Escreve 1 enquanto pressionado, 0 ao soltar (NA)
 //   'momentary_off'— Escreve 0 enquanto pressionado, 1 ao soltar (NF)
 // =============================================================================
-function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
+function BitButtonWidget({ variable, plcStateValue, opts, onWrite, isStale }) {
   // Guarda o valor otimista enquanto a escrita está pendente
   const [pendingVal, setPendingVal] = useState(null);
   const [isPending, setIsPending]   = useState(false);
@@ -77,7 +77,7 @@ function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
   };
 
   const activeColor = displayActive ? colorOn : colorOff;
-  const activeText  = displayActive ? labelOn : labelOff;
+  const activeText  = isStale ? 'Sem dados' : (displayActive ? labelOn : labelOff);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%', padding: '0.5rem' }}>
@@ -122,7 +122,7 @@ function BitButtonWidget({ variable, plcStateValue, opts, onWrite }) {
 // Reativo ao vivo: quando sem escrita pendente, mostra SEMPRE plcStateValue do CLP.
 // Quando o usuário clica, mostra pendingVal por 1.5s antes de liberar o sync.
 // =============================================================================
-function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
+function BitSwitchWidget({ variable, plcStateValue, opts, onWrite, isStale }) {
   // Estado otimista temporário para escrita pendente
   const [pendingVal, setPendingVal] = useState(null);
   const [isPending, setIsPending]   = useState(false);
@@ -180,7 +180,7 @@ function BitSwitchWidget({ variable, plcStateValue, opts, onWrite }) {
   };
 
   const activeColor = displayActive ? colorOn : colorOff;
-  const activeText  = displayActive ? labelOn : labelOff;
+  const activeText  = isStale ? 'Sem dados' : (displayActive ? labelOn : labelOff);
   const cursorStyle = isPending ? 'wait' : (isReadOnly ? 'default' : 'pointer');
 
   return (
@@ -419,8 +419,10 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
     return () => clearInterval(timer);
   }, []);
 
-  if (!lastMs) return <span>Sem leitura</span>;
-  const seconds = Math.max(0, Math.floor((nowMs - lastMs) / 1000));
+  if (!lastMs) return <span>Sem dados</span>;
+  const diffMs = nowMs - lastMs;
+  if (diffMs >= 604800000) return <span>Sem dados</span>;
+  const seconds = Math.max(0, Math.floor(diffMs / 1000));
   if (seconds < 60) return <span>Há {seconds} s</span>;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return <span>Há {minutes} m</span>;
@@ -434,7 +436,7 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
   return <span>Há {years} {years === 1 ? 'ano' : 'anos'}</span>;
 });
 
-function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
+function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
   const { width, containerRef } = useContainerWidth();
   const [isEditing, setIsEditing] = useState(false);
   const [currentLayout, setCurrentLayout] = useState([]);
@@ -443,7 +445,6 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
   const [snapKey, setSnapKey] = useState(0);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
-  const [lastReadTimes, setLastReadTimes] = useState({});
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -578,18 +579,6 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
     const tz = generalConfig?.timezone || 'America/Sao_Paulo';
     const nowTime = new Date().toLocaleTimeString('pt-BR', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const nowMs = Date.now();
-
-    setLastReadTimes(prev => {
-      const next = { ...prev };
-      variables.forEach(v => {
-        const hasVal = plcState[v.name] !== undefined || plcState[v.display_name] !== undefined;
-        if (hasVal) {
-          next[v.name] = nowMs;
-          next[v.display_name] = nowMs;
-        }
-      });
-      return next;
-    });
 
     // Intervalo mínimo entre pontos no gráfico em tempo real:
     // Usa o historyIntervalSeconds configurado pelo usuário (padrão: 15s).
@@ -817,6 +806,11 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                 } catch(e) {}
 
                 const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
+                const staleMs = lastReadTimes[v.name] || lastReadTimes[v.display_name];
+                const isStaleOverAWeek = !staleMs || (Date.now() - staleMs) >= 604800000;
+                let displayVal = typeof val === 'number' ? val.toFixed(v.decimals || 0) : val;
+                if (isStaleOverAWeek) displayVal = 'Sem dados';
+
                 const mType = String(v.modbus_type || '').toLowerCase();
                 let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
                 if (typeof val === 'number' && (mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
@@ -864,7 +858,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                       {(v.widget_type === 'value' || v.widget_type === 'value_gauge') && (
                         <div style={{ textAlign: 'center' }}>
                           <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                            {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
+                            {displayVal}
                             <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
                           </div>
                         </div>
@@ -906,7 +900,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                               
                               <div style={{ position: 'absolute', bottom: '10px', textAlign: 'center', width: '100%' }}>
                                 <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white', lineHeight: '1' }}>
-                                  {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
+                                  {displayVal}
                                   <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
                                 </div>
                               </div>
@@ -973,7 +967,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                             </PieChart>
                           </ResponsiveContainer>
                           <div style={{ position: 'absolute', fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>
-                            {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}{v.unit}
+                            {displayVal}{v.unit}
                           </div>
                         </div>
                       )}
@@ -985,14 +979,14 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                         <BitSwitchWidget
                           variable={v}
                           plcStateValue={isBitActive}
-                          opts={v.widget_type === 'switch' ? opts : { ...opts, button_mode: undefined }}
+                          opts={v.widget_type === 'switch' ? opts : { ...opts, button_mode: undefined }} isStale={isStaleOverAWeek}
                           onWrite={modbusWrite}
                         />
                       )}
 
                       {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
                       {v.widget_type === 'bit_button' && (
-                        <BitButtonWidget variable={v} plcStateValue={isBitActive} opts={opts} onWrite={modbusWrite} />
+                        <BitButtonWidget variable={v} plcStateValue={isBitActive} opts={opts} isStale={isStaleOverAWeek} onWrite={modbusWrite} />
                       )}
 
                       {/* 6. LEVEL INDICATOR / TANK */}
@@ -1024,7 +1018,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                               </div>
                             </div>
                             <div style={{ fontSize: '2rem', fontWeight: 'bold', color: v.color || '#0ea5e9', whiteSpace: 'nowrap' }}>
-                              {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
+                              {displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
                             </div>
                           </div>
                         );
@@ -1034,7 +1028,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                       {(v.widget_type === 'input' || v.widget_type === 'write_button') && (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '0 0.5rem', width: '100%' }}>
                           <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: v.color || 'var(--text-primary)', marginBottom: '0.4rem' }}>
-                            {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
+                            {displayVal}
                             <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>{v.unit}</span>
                           </div>
                           <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
@@ -1062,7 +1056,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                         <div style={{ width: '100%', padding: '0 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center', height: '100%' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
                             <span style={{ color: 'var(--text-secondary)' }}>Progresso / Escala</span>
-                            <strong style={{ color: v.color || '#3b82f6' }}>{typeof val === 'number' ? val.toFixed(v.decimals || 0) : val} {v.unit}</strong>
+                            <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>
                           </div>
                           <div style={{ width: '100%', height: '14px', background: 'rgba(0,0,0,0.4)', borderRadius: '7px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
                             <div style={{ width: `${Math.min(Math.max((typeof val === 'number' ? val : 0), 0), 100)}%`, height: '100%', background: v.color || '#3b82f6', borderRadius: '7px', transition: 'width 0.5s ease' }}></div>
@@ -1097,7 +1091,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                                 }
                               }
 
-                              const activeLabel = isBitActive ? (item.label_on || 'LIGADO') : (item.label_off || 'DESLIGADO');
+                              const targetStaleMs = targetV ? (lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'LIGADO') : (item.label_off || 'DESLIGADO'));
                               const activeColor = isBitActive ? (item.color_on || v.color || '#10b981') : (item.color_off || 'var(--text-secondary)');
                               const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
                               const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
@@ -1161,7 +1155,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                                 isBitActive = Boolean((mainWordVal >> (item.bit || 0)) & 1);
                               }
 
-                              const activeLabel = isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL');
+                              const targetStaleMs = targetV ? (lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL'));
                               const activeColor = isBitActive ? (item.color_on || v.color || '#ef4444') : (item.color_off || 'var(--text-secondary)');
                               const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
                               const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
@@ -1229,7 +1223,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                         <div style={{ position: 'relative', width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <ImageIcon size={32} color="var(--text-muted)" />
                           <div style={{ position: 'absolute', top: '10px', right: '10px', background: v.color || '#3b82f6', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>
-                            {val} {v.unit}
+                            {displayVal} {v.unit}
                           </div>
                         </div>
                       )}
@@ -1361,6 +1355,11 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
             } catch(e) {}
 
             const val = plcState[v.name] !== undefined ? plcState[v.name] : (plcState[v.display_name] !== undefined ? plcState[v.display_name] : 0);
+            const staleMs = lastReadTimes[v.name] || lastReadTimes[v.display_name];
+            const isStaleOverAWeek = !staleMs || (Date.now() - staleMs) >= 604800000;
+            let displayVal = typeof val === 'number' ? val.toFixed(v.decimals || 0) : val;
+            if (isStaleOverAWeek) displayVal = 'Sem dados';
+
             const mType = String(v.modbus_type || '').toLowerCase();
             let isBitActive = val === true || val === 1 || val === '1' || val === 'true';
             if (typeof val === 'number' && (mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
@@ -1408,7 +1407,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                   {(v.widget_type === 'value' || v.widget_type === 'value_gauge') && (
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: '2.2rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>
-                        {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
+                        {displayVal}
                         <span style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginLeft: '0.25rem' }}>{v.unit}</span>
                       </div>
                     </div>
@@ -1454,7 +1453,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                           {/* Value Text centered inside arc */}
                           <div style={{ position: 'absolute', bottom: '10px', textAlign: 'center', width: '100%' }}>
                             <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'white', lineHeight: '1' }}>
-                              {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
+                              {displayVal}
                               <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
                             </div>
                           </div>
@@ -1522,7 +1521,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                         </PieChart>
                       </ResponsiveContainer>
                       <div style={{ position: 'absolute', fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>
-                        {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}{v.unit}
+                        {displayVal}{v.unit}
                       </div>
                     </div>
                   )}
@@ -1534,14 +1533,14 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                     <BitSwitchWidget
                       variable={v}
                       plcStateValue={isBitActive}
-                      opts={v.widget_type === 'switch' ? opts : { ...opts, button_mode: undefined }}
+                      opts={v.widget_type === 'switch' ? opts : { ...opts, button_mode: undefined }} isStale={isStaleOverAWeek}
                       onWrite={modbusWrite}
                     />
                   )}
 
                   {/* 5.1 BIT BUTTON / BOTÃO DE BIT */}
                   {v.widget_type === 'bit_button' && (
-                    <BitButtonWidget variable={v} plcStateValue={isBitActive} opts={opts} onWrite={modbusWrite} />
+                    <BitButtonWidget variable={v} plcStateValue={isBitActive} opts={opts} isStale={isStaleOverAWeek} onWrite={modbusWrite} />
                   )}
 
                   {/* 6. LEVEL INDICATOR / TANK */}
@@ -1573,7 +1572,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                           </div>
                         </div>
                         <div style={{ fontSize: '2rem', fontWeight: 'bold', color: v.color || '#0ea5e9', whiteSpace: 'nowrap' }}>
-                          {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
+                          {displayVal}<span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '2px' }}>{v.unit}</span>
                         </div>
                       </div>
                     );
@@ -1583,7 +1582,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                   {(v.widget_type === 'input' || v.widget_type === 'write_button') && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '0 0.5rem', width: '100%' }}>
                       <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: v.color || 'var(--text-primary)', marginBottom: '0.4rem' }}>
-                        {typeof val === 'number' ? val.toFixed(v.decimals || 0) : val}
+                        {displayVal}
                         <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '4px' }}>{v.unit}</span>
                       </div>
                       <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
@@ -1611,7 +1610,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                     <div style={{ width: '100%', padding: '0 1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center', height: '100%' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Progresso / Escala</span>
-                        <strong style={{ color: v.color || '#3b82f6' }}>{typeof val === 'number' ? val.toFixed(v.decimals || 0) : val} {v.unit}</strong>
+                        <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>
                       </div>
                       <div style={{ width: '100%', height: '14px', background: 'rgba(0,0,0,0.4)', borderRadius: '7px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
                         <div style={{ width: `${Math.min(Math.max((typeof val === 'number' ? val : 0), 0), 100)}%`, height: '100%', background: v.color || '#3b82f6', borderRadius: '7px', transition: 'width 0.5s ease' }}></div>
@@ -1629,7 +1628,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                     <div style={{ width: '100%', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', justifyContent: 'center' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '0.4rem 0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
                         <span>PV Atual</span>
-                        <strong style={{ color: v.color || '#3b82f6' }}>{val} {v.unit}</strong>
+                        <strong style={{ color: v.color || '#3b82f6' }}>{displayVal} {v.unit}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', padding: '0.4rem 0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
                         <span>Modbus Endereço</span>
@@ -1671,7 +1670,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                             isBitActive = Boolean((mainWordVal >> (item.bit || 0)) & 1);
                           }
 
-                          const activeLabel = isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL');
+                          const targetStaleMs = targetV ? (lastReadTimes[targetV.name] || lastReadTimes[targetV.display_name]) : null; const isTargetStale = targetV ? (!targetStaleMs || (Date.now() - targetStaleMs) >= 604800000) : false; const activeLabel = isTargetStale ? 'Sem dados' : (isBitActive ? (item.label_on || 'ATIVADO') : (item.label_off || 'NORMAL'));
                           const activeColor = isBitActive ? (item.color_on || v.color || '#ef4444') : (item.color_off || 'var(--text-secondary)');
                           const bgPill = isBitActive ? `${activeColor}25` : 'rgba(255, 255, 255, 0.06)';
                           const borderPill = isBitActive ? `1px solid ${activeColor}` : '1px solid rgba(255, 255, 255, 0.05)';
@@ -1739,7 +1738,7 @@ function Dashboard({ plcState = {}, setPlcState, variables = [], cameras = [], c
                     <div style={{ position: 'relative', width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <ImageIcon size={32} color="var(--text-muted)" />
                       <div style={{ position: 'absolute', top: '10px', right: '10px', background: v.color || '#3b82f6', color: 'white', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold' }}>
-                        {val} {v.unit}
+                        {displayVal} {v.unit}
                       </div>
                     </div>
                   )}
