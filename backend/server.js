@@ -395,12 +395,20 @@ app.get('/api/cameras/:id/stream', (req, res) => {
     if (!activeStreams[camId]) {
       console.log(`[Camera ${camId}] Iniciando FFmpeg para: ${cam.url.replace(/:([^@]+)@/, ':***@')}`);
       const ffmpegArgs = [
+        // --- Baixa latência: desabilita buffering interno do FFmpeg ---
+        '-fflags', 'nobuffer',
+        '-flags', 'low_delay',
+        '-avioflags', 'direct',
+        '-probesize', '32',
+        '-analyzeduration', '0',
+        // --- Input RTSP via TCP (mais estável que UDP em LANs) ---
         '-rtsp_transport', 'tcp',
         '-i', cam.url,
+        // --- Output MJPEG sem reescala (câmera já entrega resolução adequada) ---
         '-f', 'mjpeg',
-        '-q:v', '5',
-        '-r', '5',
-        '-vf', 'scale=1280:720',
+        '-q:v', '4',      // qualidade JPEG (1=melhor, menor valor = melhor qualidade)
+        '-r', '10',       // 10 fps: equilíbrio entre fluidez e uso de CPU no Pi
+        // Sem -vf scale: evitar recálculo de pixel extra que adiciona latência
         '-'
       ];
       const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -411,26 +419,28 @@ app.get('/api/cameras/:id/stream', (req, res) => {
         if (!stream) return;
         stream.buffer = Buffer.concat([stream.buffer, chunk]);
 
-        // Detectar frames JPEG completos (começa com FF D8, termina com FF D9)
-        let startIdx = -1;
-        for (let i = 0; i < stream.buffer.length - 1; i++) {
-          if (stream.buffer[i] === 0xFF && stream.buffer[i + 1] === 0xD8) {
-            startIdx = i;
-          }
-          if (startIdx !== -1 && stream.buffer[i] === 0xFF && stream.buffer[i + 1] === 0xD9) {
-            const frame = stream.buffer.slice(startIdx, i + 2);
-            stream.buffer = stream.buffer.slice(i + 2);
-            const header = Buffer.from(
-              `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`
-            );
-            const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
-            stream.clients.forEach(client => {
-              try { client.write(packet); } catch (_) {}
-            });
-            startIdx = -1;
-            i = -1; // reinicia busca no buffer restante
-            break;
-          }
+        // Extrair todos os frames JPEG completos do buffer usando indexOf (mais eficiente)
+        const SOI = Buffer.from([0xFF, 0xD8]); // Start Of Image
+        const EOI = Buffer.from([0xFF, 0xD9]); // End Of Image
+
+        let searchFrom = 0;
+        while (true) {
+          const start = stream.buffer.indexOf(SOI, searchFrom);
+          if (start === -1) break;
+          const end = stream.buffer.indexOf(EOI, start + 2);
+          if (end === -1) break; // Frame incompleto: aguardar próximo chunk
+
+          const frame = stream.buffer.slice(start, end + 2);
+          stream.buffer = stream.buffer.slice(end + 2);
+          searchFrom = 0;
+
+          const header = Buffer.from(
+            `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`
+          );
+          const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
+          stream.clients.forEach(client => {
+            try { client.write(packet); } catch (_) {}
+          });
         }
       });
 
