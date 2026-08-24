@@ -106,6 +106,7 @@ function CameraStream({ cam }) {
       {/* Stream container */}
       <div
         ref={containerRef}
+        className="camera-dash-card"
         style={{
           position: 'relative',
           width: '100%',
@@ -121,9 +122,7 @@ function CameraStream({ cam }) {
             {/* MJPEG stream via proxy backend */}
             {status !== 'idle' && (
               <div 
-                style={{ position: 'relative', width: '100%', height: '100%', cursor: 'pointer' }}
-                onClick={() => setStatus('idle')}
-                title="Clique para pausar"
+                style={{ position: 'relative', width: '100%', height: '100%' }}
               >
                 <img
                   ref={imgRef}
@@ -139,8 +138,15 @@ function CameraStream({ cam }) {
                   }}
                 />
                 {status === 'live' && (
-                  <div style={{ position: 'absolute', top: '10px', left: '10px', background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', pointerEvents: 'none' }}>
-                    Clique para pausar
+                  <div className="camera-pause-hint" style={{
+                    position: 'absolute', bottom: '12px', left: '50%', transform: 'translateX(-50%)',
+                    background: 'rgba(0,0,0,0.65)', color: '#fff', padding: '4px 14px',
+                    borderRadius: '20px', fontSize: '0.75rem', cursor: 'pointer',
+                    opacity: 0, transition: 'opacity 0.2s ease', whiteSpace: 'nowrap',
+                    backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.15)',
+                    zIndex: 10
+                  }} onClick={() => setStatus('idle')}>
+                    ⏸ Pausar
                   </div>
                 )}
               </div>
@@ -221,17 +227,11 @@ function CameraStream({ cam }) {
               </div>
             )}
 
-            {/* Cantos decorativos ao vivo */}
+            {/* Horário decorativo ao vivo */}
             {status === 'live' && (
-              <>
-                <div style={{ position: 'absolute', top: '0.6rem', left: '0.75rem', color: 'rgba(255,255,255,0.7)', fontFamily: 'monospace', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                  REC
-                </div>
-                <div style={{ position: 'absolute', top: '0.6rem', right: '0.75rem', color: 'rgba(255,255,255,0.55)', fontFamily: 'monospace', fontSize: '0.72rem' }}>
-                  {new Date().toLocaleTimeString('pt-BR')}
-                </div>
-              </>
+              <div style={{ position: 'absolute', top: '0.6rem', right: '0.75rem', color: 'rgba(255,255,255,0.55)', fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                {new Date().toLocaleTimeString('pt-BR')}
+              </div>
             )}
           </>
         ) : (
