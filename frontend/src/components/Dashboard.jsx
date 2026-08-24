@@ -1299,17 +1299,20 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                 );
               })}
 
-              {cameras.map((c, index) => {
                 return (
-                  <div key={'cam-' + c.id.toString()} className="card" style={{ width: '100%', height: '240px', padding: '0', overflow: 'hidden' }}>
-                    <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.5)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div key={'cam-' + c.id.toString()} className="card" style={{ width: '100%', height: '240px', padding: '0', overflow: 'hidden', position: 'relative' }}>
+                    <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
                     </div>
-                    <div style={{ width: '100%', height: '100%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {c.url ? (
-                        <iframe src={c.url} style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }} title={c.name}></iframe>
+                    <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {c.url && c.url.startsWith('rtsp') ? (
+                        <img
+                          src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
+                          alt={c.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                        />
                       ) : (
-                        <div style={{ color: 'var(--text-secondary)' }}>Sem sinal (URL inválida)</div>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Configure uma URL RTSP válida</div>
                       )}
                     </div>
                   </div>
@@ -1832,15 +1835,19 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               isResizable: isEditing
             };
             return (
-              <div key={'cam-' + c.id.toString()} data-grid={gridProps} className="card" style={{ padding: '0', overflow: 'hidden' }}>
-                <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.5)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div key={'cam-' + c.id.toString()} data-grid={gridProps} className="card" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
+                <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
                 </div>
-                <div style={{ width: '100%', height: '100%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {c.url ? (
-                    <iframe src={c.url} style={{ width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }} title={c.name}></iframe>
+                <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {c.url && c.url.startsWith('rtsp') ? (
+                    <img
+                      src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
+                      alt={c.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                    />
                   ) : (
-                    <div style={{ color: 'var(--text-secondary)' }}>Sem sinal (URL inválida)</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Configure uma URL RTSP válida</div>
                   )}
                 </div>
               </div>

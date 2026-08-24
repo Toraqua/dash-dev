@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const { spawn } = require('child_process');
 
 // Prevenir queda do processo Node por erros de conexão TCP/Promise Rejection (ex: CLP offline)
 process.on('unhandledRejection', (reason) => {
@@ -365,6 +366,146 @@ app.put('/api/cameras/:id', (req, res) => {
       }
     );
   }
+});
+
+// --- Proxy de Stream RTSP → MJPEG via FFmpeg ---
+// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients } }
+const activeStreams = {};
+
+// Stream MJPEG ao vivo: GET /api/cameras/:id/stream
+app.get('/api/cameras/:id/stream', (req, res) => {
+  const camId = parseInt(req.params.id);
+  db.get('SELECT * FROM cameras WHERE id = ?', [camId], (err, cam) => {
+    if (err || !cam) return res.status(404).json({ error: 'Câmera não encontrada' });
+    if (!cam.url || !cam.url.startsWith('rtsp')) {
+      return res.status(400).json({ error: 'URL RTSP inválida. Configure uma URL que comece com rtsp://' });
+    }
+
+    // Headers HTTP multipart para MJPEG
+    res.writeHead(200, {
+      'Content-Type': 'multipart/x-mixed-replace;boundary=--frame',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+
+    // Reutilizar processo FFmpeg já ativo para esta câmera
+    if (!activeStreams[camId]) {
+      console.log(`[Camera ${camId}] Iniciando FFmpeg para: ${cam.url.replace(/:([^@]+)@/, ':***@')}`);
+      const ffmpegArgs = [
+        '-rtsp_transport', 'tcp',
+        '-i', cam.url,
+        '-f', 'mjpeg',
+        '-q:v', '5',
+        '-r', '5',
+        '-vf', 'scale=1280:720',
+        '-'
+      ];
+      const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
+      activeStreams[camId] = { proc, clients: new Set(), buffer: Buffer.alloc(0) };
+
+      proc.stdout.on('data', (chunk) => {
+        const stream = activeStreams[camId];
+        if (!stream) return;
+        stream.buffer = Buffer.concat([stream.buffer, chunk]);
+
+        // Detectar frames JPEG completos (começa com FF D8, termina com FF D9)
+        let startIdx = -1;
+        for (let i = 0; i < stream.buffer.length - 1; i++) {
+          if (stream.buffer[i] === 0xFF && stream.buffer[i + 1] === 0xD8) {
+            startIdx = i;
+          }
+          if (startIdx !== -1 && stream.buffer[i] === 0xFF && stream.buffer[i + 1] === 0xD9) {
+            const frame = stream.buffer.slice(startIdx, i + 2);
+            stream.buffer = stream.buffer.slice(i + 2);
+            const header = Buffer.from(
+              `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`
+            );
+            const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
+            stream.clients.forEach(client => {
+              try { client.write(packet); } catch (_) {}
+            });
+            startIdx = -1;
+            i = -1; // reinicia busca no buffer restante
+            break;
+          }
+        }
+      });
+
+      proc.on('exit', (code) => {
+        console.log(`[Camera ${camId}] FFmpeg encerrado (código ${code})`);
+        if (activeStreams[camId]) {
+          activeStreams[camId].clients.forEach(c => { try { c.end(); } catch (_) {} });
+          delete activeStreams[camId];
+        }
+      });
+
+      proc.on('error', (e) => {
+        if (e.code === 'ENOENT') {
+          console.error('[Camera] FFmpeg não encontrado. Instale com: sudo apt install -y ffmpeg');
+          res.status(503).json({ error: 'FFmpeg não instalado no servidor. Execute: sudo apt install -y ffmpeg' });
+        }
+        if (activeStreams[camId]) delete activeStreams[camId];
+      });
+    }
+
+    // Adicionar cliente ao mapa do stream ativo
+    activeStreams[camId].clients.add(res);
+    console.log(`[Camera ${camId}] Cliente conectado ao stream (total: ${activeStreams[camId].clients.size})`);
+
+    // Quando cliente desconecta, remover do mapa e encerrar FFmpeg se ninguém mais assistir
+    req.on('close', () => {
+      if (activeStreams[camId]) {
+        activeStreams[camId].clients.delete(res);
+        console.log(`[Camera ${camId}] Cliente desconectado (restantes: ${activeStreams[camId].clients.size})`);
+        if (activeStreams[camId].clients.size === 0) {
+          console.log(`[Camera ${camId}] Nenhum cliente. Encerrando FFmpeg.`);
+          try { activeStreams[camId].proc.kill('SIGTERM'); } catch (_) {}
+          delete activeStreams[camId];
+        }
+      }
+    });
+  });
+});
+
+// Snapshot único (frame JPEG estático): GET /api/cameras/:id/snapshot
+app.get('/api/cameras/:id/snapshot', (req, res) => {
+  const camId = parseInt(req.params.id);
+  db.get('SELECT * FROM cameras WHERE id = ?', [camId], (err, cam) => {
+    if (err || !cam) return res.status(404).json({ error: 'Câmera não encontrada' });
+    if (!cam.url || !cam.url.startsWith('rtsp')) {
+      return res.status(400).json({ error: 'URL RTSP inválida' });
+    }
+
+    const ffmpegArgs = [
+      '-rtsp_transport', 'tcp',
+      '-i', cam.url,
+      '-frames:v', '1',
+      '-f', 'image2',
+      '-vcodec', 'mjpeg',
+      '-vf', 'scale=640:360',
+      '-'
+    ];
+
+    const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
+    const chunks = [];
+
+    proc.stdout.on('data', chunk => chunks.push(chunk));
+    proc.on('close', (code) => {
+      if (code === 0 && chunks.length > 0) {
+        const img = Buffer.concat(chunks);
+        res.set('Content-Type', 'image/jpeg');
+        res.set('Cache-Control', 'no-cache');
+        res.send(img);
+      } else {
+        res.status(503).json({ error: 'Falha ao capturar snapshot da câmera' });
+      }
+    });
+    proc.on('error', () => res.status(503).json({ error: 'FFmpeg não instalado' }));
+    setTimeout(() => { try { proc.kill(); } catch (_) {} }, 15000); // timeout 15s
+  });
 });
 
 // --- APIs de Alarmes ---
