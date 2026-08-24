@@ -379,7 +379,7 @@ function startFfmpeg(camId, camUrl) {
     '-avioflags', 'direct',
     '-probesize', '32',
     '-analyzeduration', '0',
-    '-rtsp_transport', 'tcp',
+    '-rtsp_transport', 'udp',
     '-i', camUrl,
     '-f', 'mjpeg',
     '-q:v', '4',
@@ -510,7 +510,7 @@ app.get('/api/cameras/:id/snapshot', (req, res) => {
     }
 
     const ffmpegArgs = [
-      '-rtsp_transport', 'tcp',
+      '-rtsp_transport', 'udp',
       '-i', cam.url,
       '-frames:v', '1',
       '-f', 'image2',
