@@ -3,7 +3,7 @@ import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter } from 'recharts';
-import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight, Play } from 'lucide-react';
+import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight, Play, Maximize } from 'lucide-react';
 
 // =============================================================================
 // BitButtonWidget — Botão de comando Modbus com feedback instantâneo e trava
@@ -441,11 +441,29 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
 // =============================================================================
 function DashboardCameraCard({ c, getBaseUrl }) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const cardRef = useRef(null);
+
+  const handleFullscreen = () => {
+    if (cardRef.current) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        cardRef.current.requestFullscreen().catch(() => {});
+      }
+    }
+  };
 
   return (
-    <div className="card" style={{ width: '100%', height: '100%', padding: '0', overflow: 'hidden', position: 'relative' }}>
+    <div ref={cardRef} className="card" style={{ width: '100%', height: '100%', padding: '0', overflow: 'hidden', position: 'relative', background: '#020508' }}>
       <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
+        <button 
+          onClick={handleFullscreen}
+          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: '4px' }}
+          title="Tela Cheia"
+        >
+          <Maximize size={16} />
+        </button>
       </div>
       <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {c.url && c.url.startsWith('rtsp') ? (
