@@ -434,7 +434,6 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
   const years = Math.floor(days / 365);
   return <span>Há {years} {years === 1 ? 'ano' : 'anos'}</span>;
 });
-});
 
 // =============================================================================
 // DashboardCameraCard — Exibe a câmera de supervisão com botão Play para evitar
