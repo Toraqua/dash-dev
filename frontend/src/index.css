@@ -804,3 +804,15 @@ body.react-draggable-transparent-selection {
   user-select: auto !important;
   -webkit-user-select: auto !important;
 }
+
+/* Camera card no Dashboard - header e hint de pausa aparecem no hover */
+.camera-dash-card:hover .camera-dash-header,
+.camera-dash-card:hover .camera-pause-hint {
+  opacity: 1 !important;
+  pointer-events: all !important;
+}
+.camera-dash-card:fullscreen .camera-dash-header {
+  opacity: 1 !important;
+  pointer-events: all !important;
+}
+

@@ -369,8 +369,82 @@ app.put('/api/cameras/:id', (req, res) => {
 });
 
 // --- Proxy de Stream RTSP → MJPEG via FFmpeg ---
-// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients } }
+// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients, buffer, lastFrameAt, watchdog } }
 const activeStreams = {};
+
+function startFfmpeg(camId, camUrl) {
+  const ffmpegArgs = [
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
+    '-avioflags', 'direct',
+    '-probesize', '32',
+    '-analyzeduration', '0',
+    '-rtsp_transport', 'tcp',
+    '-i', camUrl,
+    '-f', 'mjpeg',
+    '-q:v', '4',
+    '-r', '10',
+    '-'
+  ];
+
+  const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
+  const stream = activeStreams[camId];
+  if (!stream) return;
+  stream.proc = proc;
+  stream.buffer = Buffer.alloc(0);
+  stream.lastFrameAt = Date.now();
+
+  proc.stdout.on('data', (chunk) => {
+    const s = activeStreams[camId];
+    if (!s) return;
+    s.lastFrameAt = Date.now();
+    s.buffer = Buffer.concat([s.buffer, chunk]);
+
+    // Anti-drift: se buffer > 300KB, descartar frames antigos até o último SOI
+    if (s.buffer.length > 300 * 1024) {
+      const SOI_marker = Buffer.from([0xFF, 0xD8]);
+      const lastSoi = s.buffer.lastIndexOf(SOI_marker);
+      if (lastSoi > 0) {
+        console.log(`[Camera ${camId}] Buffer drift (${(s.buffer.length/1024).toFixed(0)}KB). Descartando frames antigos.`);
+        s.buffer = s.buffer.slice(lastSoi);
+      }
+    }
+
+    const SOI = Buffer.from([0xFF, 0xD8]);
+    const EOI = Buffer.from([0xFF, 0xD9]);
+    let searchFrom = 0;
+    while (true) {
+      const start = s.buffer.indexOf(SOI, searchFrom);
+      if (start === -1) break;
+      const end = s.buffer.indexOf(EOI, start + 2);
+      if (end === -1) break;
+      const frame = s.buffer.slice(start, end + 2);
+      s.buffer = s.buffer.slice(end + 2);
+      searchFrom = 0;
+      const header = Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
+      const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
+      s.clients.forEach(client => { try { client.write(packet); } catch (_) {} });
+    }
+  });
+
+  proc.on('exit', (code) => {
+    console.log(`[Camera ${camId}] FFmpeg encerrado (código ${code})`);
+    if (activeStreams[camId] && activeStreams[camId].clients.size > 0) {
+      console.log(`[Camera ${camId}] Reiniciando FFmpeg automaticamente...`);
+      setTimeout(() => {
+        if (activeStreams[camId] && activeStreams[camId].clients.size > 0) startFfmpeg(camId, camUrl);
+      }, 1000);
+    } else if (activeStreams[camId]) {
+      clearInterval(activeStreams[camId].watchdog);
+      delete activeStreams[camId];
+    }
+  });
+
+  proc.on('error', (e) => {
+    if (e.code === 'ENOENT') console.error('[Camera] FFmpeg não encontrado. Instale: sudo apt install -y ffmpeg');
+    if (activeStreams[camId]) { clearInterval(activeStreams[camId].watchdog); delete activeStreams[camId]; }
+  });
+}
 
 // Stream MJPEG ao vivo: GET /api/cameras/:id/stream
 app.get('/api/cameras/:id/stream', (req, res) => {
@@ -378,10 +452,9 @@ app.get('/api/cameras/:id/stream', (req, res) => {
   db.get('SELECT * FROM cameras WHERE id = ?', [camId], (err, cam) => {
     if (err || !cam) return res.status(404).json({ error: 'Câmera não encontrada' });
     if (!cam.url || !cam.url.startsWith('rtsp')) {
-      return res.status(400).json({ error: 'URL RTSP inválida. Configure uma URL que comece com rtsp://' });
+      return res.status(400).json({ error: 'URL RTSP inválida.' });
     }
 
-    // Headers HTTP multipart para MJPEG
     res.writeHead(200, {
       'Content-Type': 'multipart/x-mixed-replace;boundary=--frame',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -391,81 +464,27 @@ app.get('/api/cameras/:id/stream', (req, res) => {
       'Access-Control-Allow-Origin': '*'
     });
 
-    // Reutilizar processo FFmpeg já ativo para esta câmera
     if (!activeStreams[camId]) {
       console.log(`[Camera ${camId}] Iniciando FFmpeg para: ${cam.url.replace(/:([^@]+)@/, ':***@')}`);
-      const ffmpegArgs = [
-        // --- Baixa latência: desabilita buffering interno do FFmpeg ---
-        '-fflags', 'nobuffer',
-        '-flags', 'low_delay',
-        '-avioflags', 'direct',
-        '-probesize', '32',
-        '-analyzeduration', '0',
-        // --- Input RTSP via TCP (mais estável que UDP em LANs) ---
-        '-rtsp_transport', 'tcp',
-        '-i', cam.url,
-        // --- Output MJPEG sem reescala (câmera já entrega resolução adequada) ---
-        '-f', 'mjpeg',
-        '-q:v', '4',      // qualidade JPEG (1=melhor, menor valor = melhor qualidade)
-        '-r', '10',       // 10 fps: equilíbrio entre fluidez e uso de CPU no Pi
-        // Sem -vf scale: evitar recálculo de pixel extra que adiciona latência
-        '-'
-      ];
-      const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
-      activeStreams[camId] = { proc, clients: new Set(), buffer: Buffer.alloc(0) };
+      activeStreams[camId] = { proc: null, clients: new Set(), buffer: Buffer.alloc(0), lastFrameAt: Date.now(), watchdog: null };
 
-      proc.stdout.on('data', (chunk) => {
-        const stream = activeStreams[camId];
-        if (!stream) return;
-        stream.buffer = Buffer.concat([stream.buffer, chunk]);
-
-        // Extrair todos os frames JPEG completos do buffer usando indexOf (mais eficiente)
-        const SOI = Buffer.from([0xFF, 0xD8]); // Start Of Image
-        const EOI = Buffer.from([0xFF, 0xD9]); // End Of Image
-
-        let searchFrom = 0;
-        while (true) {
-          const start = stream.buffer.indexOf(SOI, searchFrom);
-          if (start === -1) break;
-          const end = stream.buffer.indexOf(EOI, start + 2);
-          if (end === -1) break; // Frame incompleto: aguardar próximo chunk
-
-          const frame = stream.buffer.slice(start, end + 2);
-          stream.buffer = stream.buffer.slice(end + 2);
-          searchFrom = 0;
-
-          const header = Buffer.from(
-            `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`
-          );
-          const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
-          stream.clients.forEach(client => {
-            try { client.write(packet); } catch (_) {}
-          });
+      // Watchdog: reinicia FFmpeg se ficou 15s sem frames
+      activeStreams[camId].watchdog = setInterval(() => {
+        const s = activeStreams[camId];
+        if (!s) return;
+        const age = Date.now() - s.lastFrameAt;
+        if (age > 15000 && s.clients.size > 0) {
+          console.log(`[Camera ${camId}] Sem frames há ${(age/1000).toFixed(0)}s. Reiniciando FFmpeg (watchdog).`);
+          try { s.proc.kill('SIGTERM'); } catch (_) {}
         }
-      });
+      }, 5000);
 
-      proc.on('exit', (code) => {
-        console.log(`[Camera ${camId}] FFmpeg encerrado (código ${code})`);
-        if (activeStreams[camId]) {
-          activeStreams[camId].clients.forEach(c => { try { c.end(); } catch (_) {} });
-          delete activeStreams[camId];
-        }
-      });
-
-      proc.on('error', (e) => {
-        if (e.code === 'ENOENT') {
-          console.error('[Camera] FFmpeg não encontrado. Instale com: sudo apt install -y ffmpeg');
-          res.status(503).json({ error: 'FFmpeg não instalado no servidor. Execute: sudo apt install -y ffmpeg' });
-        }
-        if (activeStreams[camId]) delete activeStreams[camId];
-      });
+      startFfmpeg(camId, cam.url);
     }
 
-    // Adicionar cliente ao mapa do stream ativo
     activeStreams[camId].clients.add(res);
-    console.log(`[Camera ${camId}] Cliente conectado ao stream (total: ${activeStreams[camId].clients.size})`);
+    console.log(`[Camera ${camId}] Cliente conectado (total: ${activeStreams[camId].clients.size})`);
 
-    // Quando cliente desconecta, remover do mapa e encerrar FFmpeg se ninguém mais assistir
     req.on('close', () => {
       if (activeStreams[camId]) {
         activeStreams[camId].clients.delete(res);
@@ -473,6 +492,7 @@ app.get('/api/cameras/:id/stream', (req, res) => {
         if (activeStreams[camId].clients.size === 0) {
           console.log(`[Camera ${camId}] Nenhum cliente. Encerrando FFmpeg.`);
           try { activeStreams[camId].proc.kill('SIGTERM'); } catch (_) {}
+          clearInterval(activeStreams[camId].watchdog);
           delete activeStreams[camId];
         }
       }

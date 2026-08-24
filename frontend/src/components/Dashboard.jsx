@@ -454,32 +454,45 @@ function DashboardCameraCard({ c, getBaseUrl }) {
   };
 
   return (
-    <div ref={cardRef} className="card" style={{ width: '100%', height: '100%', padding: '0', overflow: 'hidden', position: 'relative', background: '#020508' }}>
-      <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
-        <button 
+    <div ref={cardRef} className="camera-dash-card" style={{ width: '100%', height: '100%', position: 'relative', background: '#020508', overflow: 'hidden', borderRadius: '12px' }}>
+      {/* Header flutuante - aparece ao passar o mouse via CSS */}
+      <div className="camera-dash-header" style={{
+        position: 'absolute', top: 0, left: 0, right: 0,
+        padding: '0.4rem 0.75rem',
+        background: 'linear-gradient(180deg, rgba(0,0,0,0.75) 0%, transparent 100%)',
+        zIndex: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        opacity: 0, transition: 'opacity 0.2s ease',
+        pointerEvents: 'none'
+      }}>
+        <h3 style={{ color: 'white', margin: 0, fontSize: '0.8rem', fontWeight: 600, textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>{c.name}</h3>
+        <button
           onClick={handleFullscreen}
-          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: '4px' }}
+          style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center', padding: '4px 6px', borderRadius: '6px', pointerEvents: 'all', backdropFilter: 'blur(4px)' }}
           title="Tela Cheia"
         >
-          <Maximize size={16} />
+          <Maximize size={14} />
         </button>
       </div>
-      <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+
+      {/* Container do vídeo */}
+      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {c.url && c.url.startsWith('rtsp') ? (
           isPlaying ? (
-            <div 
-              style={{ position: 'relative', width: '100%', height: '100%', cursor: 'pointer' }}
-              onClick={() => setIsPlaying(false)}
-              title="Clique para pausar"
-            >
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
               <img
                 src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
                 alt={c.name}
                 style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
               />
-              <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', pointerEvents: 'none' }}>
-                Clique para pausar
+              {/* Botão de pausa flutuante - aparece no hover */}
+              <div className="camera-pause-hint" style={{
+                position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)',
+                background: 'rgba(0,0,0,0.55)', color: '#fff', padding: '4px 12px',
+                borderRadius: '20px', fontSize: '0.72rem', cursor: 'pointer',
+                opacity: 0, transition: 'opacity 0.2s ease', whiteSpace: 'nowrap',
+                backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.15)'
+              }} onClick={() => setIsPlaying(false)}>
+                ⏸ Pausar
               </div>
             </div>
           ) : (
@@ -492,22 +505,22 @@ function DashboardCameraCard({ c, getBaseUrl }) {
                 onClick={() => setIsPlaying(true)}
                 style={{
                   width: '72px', height: '72px', borderRadius: '50%',
-                  background: 'rgba(59, 130, 246, 0.2)', 
+                  background: 'rgba(59, 130, 246, 0.2)',
                   border: '2px solid rgba(59, 130, 246, 0.5)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+                  cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                   backdropFilter: 'blur(8px)', zIndex: 5,
                   boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
                 }}
-                onMouseOver={(e) => { 
-                  e.currentTarget.style.background = 'var(--color-primary)'; 
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = 'var(--color-primary)';
                   e.currentTarget.style.borderColor = 'var(--color-primary)';
                   e.currentTarget.style.transform = 'scale(1.1)';
                   e.currentTarget.style.boxShadow = '0 0 30px rgba(59, 130, 246, 0.4)';
                 }}
-                onMouseOut={(e) => { 
-                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)'; 
-                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)'; 
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
+                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
                   e.currentTarget.style.transform = 'scale(1)';
                   e.currentTarget.style.boxShadow = '0 0 20px rgba(59, 130, 246, 0.15)';
                 }}
