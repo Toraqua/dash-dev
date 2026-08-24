@@ -888,7 +888,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                 }
 
                 return (
-                  <div key={'var-' + v.id.toString()} className="card" style={{ width: '100%', minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
+                  <div key={'var-' + v.id.toString()} className="card" style={{ width: '100%', height: (['graph', 'timeseries', 'comparative_analysis', 'scatter'].includes(v.widget_type)) ? '280px' : undefined, minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
                     <div className="card-header" style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div className="card-title" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <Activity size={16} color={v.color || "var(--color-primary)"} />
@@ -1072,7 +1072,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                         const pct = Math.min(Math.max(((numVal - minVal) / range) * 100, 0), 100);
 
                         return (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '1.25rem', height: '100%', width: '100%', paddingLeft: '1.25rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.25rem', height: '100%', width: '100%' }}>
                             <div style={{
                               position: 'relative', width: '38px', minWidth: '38px', flexShrink: 0, height: '85%', minHeight: '80px',
                               background: 'rgba(0, 0, 0, 0.5)', borderRadius: '12px', border: '2px solid var(--border-highlight)',
@@ -1619,7 +1619,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                     const pct = Math.min(Math.max(((numVal - minVal) / range) * 100, 0), 100);
 
                     return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '1.25rem', height: '100%', width: '100%', paddingLeft: '1.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.25rem', height: '100%', width: '100%' }}>
                         <div style={{
                           position: 'relative', width: '38px', minWidth: '38px', flexShrink: 0, height: '85%', minHeight: '80px',
                           background: 'rgba(0, 0, 0, 0.5)', borderRadius: '12px', border: '2px solid var(--border-highlight)',
