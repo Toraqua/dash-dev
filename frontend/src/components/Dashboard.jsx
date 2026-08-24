@@ -450,26 +450,51 @@ function DashboardCameraCard({ c, getBaseUrl }) {
       <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {c.url && c.url.startsWith('rtsp') ? (
           isPlaying ? (
-            <img
-              src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
-              alt={c.name}
-              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-            />
+            <div 
+              style={{ position: 'relative', width: '100%', height: '100%', cursor: 'pointer' }}
+              onClick={() => setIsPlaying(false)}
+              title="Clique para pausar"
+            >
+              <img
+                src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
+                alt={c.name}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              />
+              <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', pointerEvents: 'none' }}>
+                Clique para pausar
+              </div>
+            </div>
           ) : (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(2,5,8,0.5)' }}>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(2,5,8,0.95) 100%)' }}>
+              <div style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>
+                Câmera Pausada
+              </div>
               <button
                 className="btn"
                 onClick={() => setIsPlaying(true)}
                 style={{
-                  width: '60px', height: '60px', borderRadius: '50%',
-                  background: 'rgba(255,255,255,0.1)', border: '2px solid rgba(255,255,255,0.2)',
+                  width: '72px', height: '72px', borderRadius: '50%',
+                  background: 'rgba(59, 130, 246, 0.2)', 
+                  border: '2px solid rgba(59, 130, 246, 0.5)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', transition: 'all 0.2s ease', backdropFilter: 'blur(4px)', zIndex: 5
+                  cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+                  backdropFilter: 'blur(8px)', zIndex: 5,
+                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
                 }}
-                onMouseOver={(e) => { e.currentTarget.style.background = 'var(--color-primary)'; e.currentTarget.style.borderColor = 'var(--color-primary)'; }}
-                onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}
+                onMouseOver={(e) => { 
+                  e.currentTarget.style.background = 'var(--color-primary)'; 
+                  e.currentTarget.style.borderColor = 'var(--color-primary)';
+                  e.currentTarget.style.transform = 'scale(1.1)';
+                  e.currentTarget.style.boxShadow = '0 0 30px rgba(59, 130, 246, 0.4)';
+                }}
+                onMouseOut={(e) => { 
+                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)'; 
+                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)'; 
+                  e.currentTarget.style.transform = 'scale(1)';
+                  e.currentTarget.style.boxShadow = '0 0 20px rgba(59, 130, 246, 0.15)';
+                }}
               >
-                <Play size={28} color="#fff" style={{ marginLeft: '4px' }} />
+                <Play size={34} color="#fff" style={{ marginLeft: '4px' }} fill="#fff" />
               </button>
             </div>
           )
@@ -901,7 +926,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                         Sem dados
                       </div>
                     ) : (
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+                      <div style={{ flex: 1, width: '100%', height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
                       
                       {/* 1. VALUE / GAUGE DE VALOR */}
                       {(v.widget_type === 'value' || v.widget_type === 'value_gauge') && (
