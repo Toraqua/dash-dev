@@ -3,7 +3,7 @@ import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter } from 'recharts';
-import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight, Play } from 'lucide-react';
 
 // =============================================================================
 // BitButtonWidget — Botão de comando Modbus com feedback instantâneo e trava
@@ -434,6 +434,53 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
   const years = Math.floor(days / 365);
   return <span>Há {years} {years === 1 ? 'ano' : 'anos'}</span>;
 });
+});
+
+// =============================================================================
+// DashboardCameraCard — Exibe a câmera de supervisão com botão Play para evitar
+// overload no servidor com FFmpeg simultâneo
+// =============================================================================
+function DashboardCameraCard({ c, getBaseUrl }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  return (
+    <div className="card" style={{ width: '100%', height: '100%', padding: '0', overflow: 'hidden', position: 'relative' }}>
+      <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
+      </div>
+      <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {c.url && c.url.startsWith('rtsp') ? (
+          isPlaying ? (
+            <img
+              src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
+              alt={c.name}
+              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+            />
+          ) : (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(2,5,8,0.5)' }}>
+              <button
+                className="btn"
+                onClick={() => setIsPlaying(true)}
+                style={{
+                  width: '60px', height: '60px', borderRadius: '50%',
+                  background: 'rgba(255,255,255,0.1)', border: '2px solid rgba(255,255,255,0.2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', transition: 'all 0.2s ease', backdropFilter: 'blur(4px)', zIndex: 5
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.background = 'var(--color-primary)'; e.currentTarget.style.borderColor = 'var(--color-primary)'; }}
+                onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}
+              >
+                <Play size={28} color="#fff" style={{ marginLeft: '4px' }} />
+              </button>
+            </div>
+          )
+        ) : (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Configure uma URL RTSP válida</div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
   const { width, containerRef } = useContainerWidth();
@@ -1300,21 +1347,8 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               })}
 
               {cameras.map((c) => (
-                <div key={'cam-' + c.id.toString()} className="card" style={{ width: '100%', height: '240px', padding: '0', overflow: 'hidden', position: 'relative' }}>
-                  <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
-                  </div>
-                  <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {c.url && c.url.startsWith('rtsp') ? (
-                      <img
-                        src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
-                        alt={c.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                      />
-                    ) : (
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Configure uma URL RTSP válida</div>
-                    )}
-                  </div>
+                <div key={'cam-' + c.id.toString()} style={{ width: '100%', height: '240px', position: 'relative' }}>
+                  <DashboardCameraCard c={c} getBaseUrl={getBaseUrl} />
                 </div>
               ))}
             </div>
@@ -1834,21 +1868,8 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               isResizable: isEditing
             };
             return (
-              <div key={'cam-' + c.id.toString()} data-grid={gridProps} className="card" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
-                <div className="card-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '0.5rem 1rem', background: 'rgba(0,0,0,0.6)', zIndex: 10, margin: 0, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 className="card-title" style={{ color: 'white', margin: 0, fontSize: '0.875rem' }}>{c.name}</h3>
-                </div>
-                <div style={{ width: '100%', height: '100%', background: '#020508', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {c.url && c.url.startsWith('rtsp') ? (
-                    <img
-                      src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
-                      alt={c.name}
-                      style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                    />
-                  ) : (
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Configure uma URL RTSP válida</div>
-                  )}
-                </div>
+              <div key={'cam-' + c.id.toString()} data-grid={gridProps}>
+                <DashboardCameraCard c={c} getBaseUrl={getBaseUrl} />
               </div>
             );
           })}

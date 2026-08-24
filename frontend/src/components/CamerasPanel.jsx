@@ -11,7 +11,7 @@ const getBaseUrl = () => {
 };
 
 function CameraStream({ cam }) {
-  const [status, setStatus] = useState('connecting'); // connecting | live | error
+  const [status, setStatus] = useState('idle'); // idle | connecting | live | error
   const [errorMsg, setErrorMsg] = useState('');
   const [retryCount, setRetryCount] = useState(0);
   const imgRef = useRef(null);
@@ -43,6 +43,10 @@ function CameraStream({ cam }) {
     setRetryCount(c => c + 1);
   };
 
+  const handlePlay = () => {
+    setStatus('connecting');
+  };
+
   const handleFullscreen = () => {
     if (containerRef.current) {
       if (document.fullscreenElement) {
@@ -72,11 +76,11 @@ function CameraStream({ cam }) {
             padding: '2px 8px',
             borderRadius: '999px',
             fontWeight: 600,
-            background: status === 'live' ? 'rgba(34,197,94,0.15)' : status === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(251,191,36,0.15)',
-            color: status === 'live' ? '#22c55e' : status === 'error' ? '#ef4444' : '#fbbf24',
-            border: `1px solid ${status === 'live' ? 'rgba(34,197,94,0.3)' : status === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(251,191,36,0.3)'}`,
+            background: status === 'live' ? 'rgba(34,197,94,0.15)' : status === 'error' ? 'rgba(239,68,68,0.15)' : status === 'idle' ? 'rgba(255,255,255,0.1)' : 'rgba(251,191,36,0.15)',
+            color: status === 'live' ? '#22c55e' : status === 'error' ? '#ef4444' : status === 'idle' ? '#a1a1aa' : '#fbbf24',
+            border: `1px solid ${status === 'live' ? 'rgba(34,197,94,0.3)' : status === 'error' ? 'rgba(239,68,68,0.3)' : status === 'idle' ? 'rgba(255,255,255,0.2)' : 'rgba(251,191,36,0.3)'}`,
           }}>
-            {status === 'live' ? '● AO VIVO' : status === 'error' ? '● OFFLINE' : '● CONECTANDO...'}
+            {status === 'live' ? '● AO VIVO' : status === 'error' ? '● OFFLINE' : status === 'idle' ? 'PAUSADO' : '● CONECTANDO...'}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -115,19 +119,45 @@ function CameraStream({ cam }) {
         {isRtsp ? (
           <>
             {/* MJPEG stream via proxy backend */}
-            <img
-              ref={imgRef}
-              src={streamUrl}
-              alt={cam.name}
-              onLoad={handleLoad}
-              onError={handleError}
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-                display: status === 'error' ? 'none' : 'block',
-              }}
-            />
+            {status !== 'idle' && (
+              <img
+                ref={imgRef}
+                src={streamUrl}
+                alt={cam.name}
+                onLoad={handleLoad}
+                onError={handleError}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  display: status === 'error' ? 'none' : 'block',
+                }}
+              />
+            )}
+
+            {/* Overlay: Idle (Play) */}
+            {status === 'idle' && (
+              <div style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(2,5,8,0.5)'
+              }}>
+                <button
+                  className="btn"
+                  onClick={handlePlay}
+                  style={{
+                    width: '60px', height: '60px', borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.1)', border: '2px solid rgba(255,255,255,0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', transition: 'all 0.2s ease', backdropFilter: 'blur(4px)'
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.background = 'var(--color-primary)'; e.currentTarget.style.borderColor = 'var(--color-primary)'; }}
+                  onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}
+                >
+                  <Play size={28} color="#fff" style={{ marginLeft: '4px' }} />
+                </button>
+              </div>
+            )}
 
             {/* Overlay: Conectando */}
             {status === 'connecting' && (
