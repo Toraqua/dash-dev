@@ -372,9 +372,9 @@ class PLCService extends EventEmitter {
 
     console.log(`[Modbus] Conectando ao dispositivo ID ${deviceId} (${dev.info.ip_address}:${dev.info.port})...`);
 
-    // Criar novo client Modbus TCP com timeout de 2 segundos por frame
+    // Criar novo client Modbus TCP com timeout ultra-rápido de 600ms por frame
     const client = new ModbusRTU();
-    client.setTimeout(2000);
+    client.setTimeout(600);
 
     // Tratar erros no nível do socket TCP
     client.on('error', (err) => {
@@ -541,25 +541,48 @@ class PLCService extends EventEmitter {
       const individualData = new Map(); // key: `${type}:${addr}` → array de dados
 
       let successfulReadsThisCycle = 0;
+      const nowMs = Date.now();
+
+      // Helper com hard timeout de 700ms para NUNCA travar o event loop do Node
+      const withHardTimeout = (promise, timeoutMs = 700) => {
+        return Promise.race([
+          promise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Modbus Timeout (700ms)')), timeoutMs))
+        ]);
+      };
 
       const readVarDirectly = async (type, v, readFn) => {
+        // Se a variável está em cooldown devido a falhas recentes, pula instantaneamente (0ms)
+        if (v._cooldownUntil && nowMs < v._cooldownUntil) {
+          return;
+        }
+
         const addr = parseInt(v.modbus_address) || 0;
         const nRegs = (type === 'holding' || type === 'input') ? getNumRegsForVar(v) : 1;
         try {
-          const res = await readFn(addr, nRegs);
+          const res = await withHardTimeout(readFn(addr, nRegs));
           if (res && res.data) {
             individualData.set(`${type}:${addr}`, res.data);
             successfulReadsThisCycle++;
+            v._failCount = 0;
+            v._cooldownUntil = 0;
           }
         } catch(err) {
-          console.warn(`[Modbus Warning] Variável '${v.name}' [${type}#${addr}] com falha na leitura: ${err.message}`);
+          v._failCount = (v._failCount || 0) + 1;
+          // Após 2 falhas consecutivas, entra em cooldown por 30s para não atrasar a UI
+          if (v._failCount >= 2) {
+            v._cooldownUntil = Date.now() + 30000;
+            console.warn(`[Modbus Cooldown] Variável '${v.name}' [${type}#${addr}] em cooldown por 30s após falhar: ${err.message}`);
+          } else {
+            console.warn(`[Modbus Warning] Variável '${v.name}' [${type}#${addr}] com falha na leitura: ${err.message}`);
+          }
         }
       };
 
       const readBlock = async (type, block, readFn) => {
-        // Se a leitura por bloco foi desativada para este dispositivo ou tipo (por timeout prévio),
-        // ou se o bloco contém apenas 1 variável, lê diretamente sem tentar o bloco grande.
-        if (dev.disableBlockRead || block.vars.length <= 1) {
+        // Tenta auto-recuperar a leitura em bloco após 30s de cooldown
+        const isBlockDisabled = dev.disableBlockReadUntil && nowMs < dev.disableBlockReadUntil;
+        if (isBlockDisabled || block.vars.length <= 1) {
           for (const v of block.vars) {
             await readVarDirectly(type, v, readFn);
           }
@@ -568,15 +591,16 @@ class PLCService extends EventEmitter {
 
         const count = block.end - block.start;
         try {
-          const res = await readFn(block.start, count);
+          const res = await withHardTimeout(readFn(block.start, count), 1200);
           if (res && res.data) {
             blockData.set(`${type}:${block.start}`, res.data);
             successfulReadsThisCycle += block.vars.length;
+            dev.disableBlockReadUntil = 0;
           }
         } catch(e) {
-          console.warn(`[Modbus Warning] Bloco ${type}[${block.start}..${block.end-1}] falhou: ${e.message}. Ativando modo de leitura direta por variável...`);
-          // Se deu timeout em bloco grande, memorizar para não atrasar os próximos ciclos
-          dev.disableBlockRead = true;
+          console.warn(`[Modbus Warning] Bloco ${type}[${block.start}..${block.end-1}] falhou: ${e.message}. Ativando modo direto por 30s...`);
+          // Entra em modo de leitura direta por 30s
+          dev.disableBlockReadUntil = Date.now() + 30000;
 
           // Fallback imediato: ler cada variável do bloco separadamente
           for (const v of block.vars) {
