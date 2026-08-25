@@ -7,6 +7,15 @@ import GatewayPanel from './components/GatewayPanel';
 import AlarmsPanel from './components/AlarmsPanel';
 import CamerasPanel from './components/CamerasPanel';
 
+const getBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    if (window.location.port === '5173') return '';
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') return '';
+  }
+  return 'http://localhost:3001';
+};
+
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [theme, setTheme] = useState(() => localStorage.getItem('kronox_theme') || 'dark');
@@ -99,15 +108,6 @@ function App() {
   };
 
   const fetchData = async () => {
-    const getBaseUrl = () => {
-      if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
-      if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-        if (window.location.port === '5173') return '';
-        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') return '';
-      }
-      return 'http://localhost:3001';
-    };
-    
     try {
       const [varRes, camRes, devRes, lightRes, genRes] = await Promise.all([
         fetch(getBaseUrl() + '/api/variables'),
