@@ -50,7 +50,7 @@ io.on('connection', (socket) => {
 });
 
 plc.on('update', (data) => {
-  io.emit('update', data);
+  io.volatile.emit('update', data);
   // Compatibilidade com o gateway que espera apenas o estado
   gatewayService.publishTelemetry(data.state || data);
 });
@@ -382,8 +382,8 @@ function startFfmpeg(camId, camUrl) {
     '-rtsp_transport', 'udp',
     '-i', camUrl,
     '-f', 'mjpeg',
-    '-q:v', '4',
-    '-r', '10',
+    '-q:v', '5',
+    '-r', '8',
     '-'
   ];
 
@@ -423,7 +423,16 @@ function startFfmpeg(camId, camUrl) {
       searchFrom = 0;
       const header = Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
       const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
-      s.clients.forEach(client => { try { client.write(packet); } catch (_) {} });
+
+      // Transmissão com proteção de backpressure: descarta frames para clientes lentos/abas em segundo plano
+      s.clients.forEach(client => {
+        if (client.destroyed || client.writableEnded) return;
+        // Se a resposta HTTP do cliente estiver com o buffer cheio (>64KB), descarta o frame para evitar estouro de RAM
+        if (client.writableLength > 64 * 1024 || client.writableNeedDrain) {
+          return;
+        }
+        try { client.write(packet); } catch (_) {}
+      });
     }
   });
 

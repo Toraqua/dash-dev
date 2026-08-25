@@ -12,11 +12,18 @@ const getBaseUrl = () => {
 
 function CameraStream({ cam }) {
   const [status, setStatus] = useState('idle'); // idle | connecting | live | error
+  const [isTabVisible, setIsTabVisible] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [retryCount, setRetryCount] = useState(0);
   const imgRef = useRef(null);
   const containerRef = useRef(null);
   const retryTimeout = useRef(null);
+
+  useEffect(() => {
+    const handleVis = () => setIsTabVisible(!document.hidden);
+    document.addEventListener('visibilitychange', handleVis);
+    return () => document.removeEventListener('visibilitychange', handleVis);
+  }, []);
 
   const streamUrl = `${getBaseUrl()}/api/cameras/${cam.id}/stream?t=${retryCount}`;
 
@@ -120,7 +127,7 @@ function CameraStream({ cam }) {
         {isRtsp ? (
           <>
             {/* MJPEG stream via proxy backend */}
-            {status !== 'idle' && (
+            {status !== 'idle' && isTabVisible && (
               <div 
                 style={{ position: 'relative', width: '100%', height: '100%' }}
               >

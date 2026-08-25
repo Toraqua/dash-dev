@@ -441,7 +441,16 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
 // =============================================================================
 function DashboardCameraCard({ c, getBaseUrl }) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isTabVisible, setIsTabVisible] = useState(true);
   const cardRef = useRef(null);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      setIsTabVisible(!document.hidden);
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
 
   const handleFullscreen = () => {
     if (cardRef.current) {
@@ -477,7 +486,7 @@ function DashboardCameraCard({ c, getBaseUrl }) {
       {/* Container do vídeo */}
       <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {c.url && c.url.startsWith('rtsp') ? (
-          isPlaying ? (
+          (isPlaying && isTabVisible) ? (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
               <img
                 src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
