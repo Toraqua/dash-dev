@@ -1253,8 +1253,9 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           <div style={{ width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', padding: '0.2rem 0.4rem' }}>
                             {items.map((item, idx) => {
                               let isBitActive = false;
+                              let targetV = null;
                               if (item.variable_id) {
-                                const targetV = variables.find(varObj => varObj.id === item.variable_id);
+                                targetV = variables.find(varObj => varObj.id === item.variable_id);
                                 if (targetV && plcState && plcState[targetV.name] !== undefined) {
                                   const rawTargetVal = plcState[targetV.name];
                                   if (targetV.type === 'boolean' || targetV.modbus_type === 'coil' || targetV.modbus_type === 'discrete') {
@@ -1761,8 +1762,9 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       <div style={{ width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', padding: '0.2rem 0.4rem' }}>
                         {items.map((item, idx) => {
                           let isBitActive = false;
+                          let targetV = null;
                           if (item.variable_id) {
-                            const targetV = variables.find(varObj => varObj.id === item.variable_id);
+                            targetV = variables.find(varObj => varObj.id === item.variable_id);
                             if (targetV && plcState && plcState[targetV.name] !== undefined) {
                               const rawTargetVal = plcState[targetV.name];
                               if (targetV.type === 'boolean' || targetV.modbus_type === 'coil' || targetV.modbus_type === 'discrete') {
