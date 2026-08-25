@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { io } from 'socket.io-client';
 import { Activity, Settings, Zap, Camera, AlertTriangle, Wrench, LogOut, User, Lock, BellRing, Lightbulb, Sun, Moon, Cpu } from 'lucide-react';
-import Dashboard from './components/Dashboard';
-import ConfigPanel from './components/ConfigPanel';
-import GatewayPanel from './components/GatewayPanel';
-import AlarmsPanel from './components/AlarmsPanel';
-import CamerasPanel from './components/CamerasPanel';
+
+// Lazy loading: cada componente só é baixado/analisado quando o usuário navega para aquela aba.
+// Isso reduz drasticamente o JS inicial que o RPi3 precisa processar ao abrir a página.
+const Dashboard    = lazy(() => import('./components/Dashboard'));
+const ConfigPanel  = lazy(() => import('./components/ConfigPanel'));
+const GatewayPanel = lazy(() => import('./components/GatewayPanel'));
+const AlarmsPanel  = lazy(() => import('./components/AlarmsPanel'));
+const CamerasPanel = lazy(() => import('./components/CamerasPanel'));
 
 const getBaseUrl = () => {
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
@@ -232,17 +235,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Conectar ao backend (usa proxy / caminho relativo em produção, ou URL direta se configurada)
     const socketUrl = import.meta.env.VITE_API_URL || (window.location.port === '5173' ? 'http://localhost:3001' : undefined);
     const newSocket = io(socketUrl, {
-      // Alinhado com as configurações de ping do servidor (30s/15s)
       timeout: 20000,
-      // Backoff exponencial lento para não sobrecarregar o RPi3 com reconexões rápidas
       reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
       reconnectionAttempts: 10,
-      // WebSocket direto — mais eficiente que polling no RPi3
-      transports: ['websocket'],
+      // Permite polling como fallback se WebSocket falhar — essencial no RPi3
+      // quando o servidor está ocupado e o upgrade WS demora
+      transports: ['websocket', 'polling'],
     });
     setSocket(newSocket);
 
@@ -455,46 +456,48 @@ function App() {
           </div>
         </div>
 
-        <div style={{ display: activeTab === 'dashboard' ? 'contents' : 'none' }}>
-          <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'supervision' || !v.category)} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
-        </div>
+        <Suspense fallback={<div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Carregando módulo...</div>}>
+          <div style={{ display: activeTab === 'dashboard' ? 'contents' : 'none' }}>
+            <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'supervision' || !v.category)} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
+          </div>
 
-        <div style={{ display: activeTab === 'engineering' ? 'contents' : 'none' }}>
-          <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'engineering')} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
-        </div>
+          <div style={{ display: activeTab === 'engineering' ? 'contents' : 'none' }}>
+            <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'engineering')} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
+          </div>
 
-        {activeTab === 'config' && (
-          <ConfigPanel
-            socket={socket}
-            variables={variables}
-            cameras={cameras}
-            devices={devices}
-            generalConfig={generalConfig}
-            onRefresh={fetchData}
-            onTestStaleMode={() => {
-              const stale8DaysMs = Date.now() - (8 * 24 * 60 * 60 * 1000);
-              const testTimes = {};
-              variables.forEach(v => {
-                testTimes[v.id] = stale8DaysMs;
-                testTimes[v.name] = stale8DaysMs;
-                if (v.display_name) testTimes[v.display_name] = stale8DaysMs;
-              });
-              setLastReadTimes(testTimes);
-            }}
-          />
-        )}
+          {activeTab === 'config' && (
+            <ConfigPanel
+              socket={socket}
+              variables={variables}
+              cameras={cameras}
+              devices={devices}
+              generalConfig={generalConfig}
+              onRefresh={fetchData}
+              onTestStaleMode={() => {
+                const stale8DaysMs = Date.now() - (8 * 24 * 60 * 60 * 1000);
+                const testTimes = {};
+                variables.forEach(v => {
+                  testTimes[v.id] = stale8DaysMs;
+                  testTimes[v.name] = stale8DaysMs;
+                  if (v.display_name) testTimes[v.display_name] = stale8DaysMs;
+                });
+                setLastReadTimes(testTimes);
+              }}
+            />
+          )}
 
-        {activeTab === 'gateway' && (
-          <GatewayPanel currentUser={currentUser} variables={variables} generalConfig={generalConfig} onRefresh={fetchData} />
-        )}
+          {activeTab === 'gateway' && (
+            <GatewayPanel currentUser={currentUser} variables={variables} generalConfig={generalConfig} onRefresh={fetchData} />
+          )}
 
-        {activeTab === 'cameras' && (
-          <CamerasPanel plcState={plcState} cameras={cameras} />
-        )}
+          {activeTab === 'cameras' && (
+            <CamerasPanel plcState={plcState} cameras={cameras} />
+          )}
 
-        {activeTab === 'alarms' && (
-          <AlarmsPanel plcState={plcState} currentUser={currentUser} devices={devices} generalConfig={generalConfig} />
-        )}
+          {activeTab === 'alarms' && (
+            <AlarmsPanel plcState={plcState} currentUser={currentUser} devices={devices} generalConfig={generalConfig} />
+          )}
+        </Suspense>
       </main>
 
       {/* Login Modal */}
