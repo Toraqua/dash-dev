@@ -3,7 +3,7 @@ import {
   Save, X, Check, Plus, Trash2, Server, Edit2, TrendingUp, PieChart,
   Gauge, Table, List, Link, MapPin, Image, BarChart2, ScatterChart,
   Layout, Grid, Binary, Clock, Type, Edit3, Activity, BarChart, Info, Power,
-  ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key, Shield, Search, RefreshCw, Copy
+  ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key, Shield, Search, RefreshCw, Copy, Eye, EyeOff
 } from 'lucide-react';
 
 const BLOCK_TYPES = [
@@ -663,6 +663,23 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     }
   };
 
+  const handleToggleVisibility = async (v) => {
+    const newCategory = v.category === 'hidden' ? 'supervision' : 'hidden';
+    try {
+      const response = await fetch(getBaseUrl() + `/api/variables/${v.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: newCategory })
+      });
+      if (response.ok) {
+        showNotification(newCategory === 'hidden' ? `Variável '${v.display_name}' foi Ocultada do Dashboard` : `Variável '${v.display_name}' agora está Visível no Dashboard`, 'info');
+        if (onRefresh) onRefresh();
+      }
+    } catch (e) {
+      showNotification('Erro ao alterar visibilidade', 'error');
+    }
+  };
+
   const handleAddCamera = async () => {
     try {
       let response;
@@ -891,10 +908,11 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                 </select>
               </div>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
-                <label className="form-label">Categoria (Tela)</label>
-                <select className="form-input" value={newVar.category} onChange={e => setNewVar({ ...newVar, category: e.target.value })}>
-                  <option value="supervision">Supervisão (Dashboard)</option>
-                  <option value="engineering">Engenharia (Parâmetros)</option>
+                <label className="form-label">Exibição / Categoria</label>
+                <select className="form-input" value={newVar.category || 'supervision'} onChange={e => setNewVar({ ...newVar, category: e.target.value })}>
+                  <option value="supervision">Supervisão (Visível no Dashboard)</option>
+                  <option value="engineering">Engenharia (Visível na Tela Engenharia)</option>
+                  <option value="hidden">👁️ Oculta (Não exibir card - Usada em Listas/Alarmes)</option>
                 </select>
               </div>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
@@ -1294,6 +1312,19 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      className="btn"
+                      style={{
+                        background: v.category === 'hidden' ? 'rgba(148, 163, 184, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                        color: v.category === 'hidden' ? '#94a3b8' : '#10b981',
+                        padding: '0.5rem',
+                        cursor: 'pointer'
+                      }}
+                      title={v.category === 'hidden' ? 'Variável Oculta do Dashboard (Clique para Tornar Visível)' : 'Variável Visível no Dashboard (Clique para Ocultar)'}
+                      onClick={() => handleToggleVisibility(v)}
+                    >
+                      {v.category === 'hidden' ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                     <button className="btn" style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '0.5rem', cursor: 'pointer' }} title="Duplicar / Copiar Variável" onClick={() => handleDuplicateVariable(v)}>
                       <Copy size={16} />
                     </button>

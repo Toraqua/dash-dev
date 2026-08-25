@@ -458,11 +458,11 @@ function App() {
 
         <Suspense fallback={<div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Carregando módulo...</div>}>
           <div style={{ display: activeTab === 'dashboard' ? 'contents' : 'none' }}>
-            <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'supervision' || !v.category)} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
+            <Dashboard key="dashboard" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => (v.category === 'supervision' || !v.category) && v.category !== 'hidden')} allVariables={variables} cameras={cameras} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
           </div>
 
           <div style={{ display: activeTab === 'engineering' ? 'contents' : 'none' }}>
-            <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'engineering')} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
+            <Dashboard key="engineering" plcState={plcState} setPlcState={setPlcState} lastReadTimes={lastReadTimes} variables={variables.filter(v => v.category === 'engineering' && v.category !== 'hidden')} allVariables={variables} cameras={[]} currentUser={currentUser} generalConfig={generalConfig} onRefresh={fetchData} onRequireLogin={() => setShowLoginModal(true)} />
           </div>
 
           {activeTab === 'config' && (

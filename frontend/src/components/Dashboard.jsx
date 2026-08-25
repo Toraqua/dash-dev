@@ -546,13 +546,15 @@ function DashboardCameraCard({ c, getBaseUrl }) {
   );
 }
 
-function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin }) {
+function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin, allVariables = [] }) {
   const { width, containerRef } = useContainerWidth();
   const [isEditing, setIsEditing] = useState(false);
   const [currentLayout, setCurrentLayout] = useState([]);
   const [historyData, setHistoryData] = useState({});
   const [inputValues, setInputValues] = useState({});
   const [snapKey, setSnapKey] = useState(0);
+
+  const targetVarList = useMemo(() => allVariables.length > 0 ? allVariables : variables, [allVariables, variables]);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
 
@@ -1190,7 +1192,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           <div style={{ width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', padding: '0.2rem 0.4rem' }}>
                             {items.map((item, idx) => {
                               let isBitActive = false;
-                              const targetV = variables.find(varObj => varObj.id === item.variable_id);
+                              const targetV = targetVarList.find(varObj => varObj.id === item.variable_id);
                               let varName = item.name;
                               if (!varName && targetV) varName = targetV.display_name;
                               if (!varName) varName = `Variável ${idx}`;
@@ -1255,7 +1257,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                               let isBitActive = false;
                               let targetV = null;
                               if (item.variable_id) {
-                                targetV = variables.find(varObj => varObj.id === item.variable_id);
+                                targetV = targetVarList.find(varObj => varObj.id === item.variable_id);
                                 if (targetV && plcState && plcState[targetV.name] !== undefined) {
                                   const rawTargetVal = plcState[targetV.name];
                                   if (targetV.type === 'boolean' || targetV.modbus_type === 'coil' || targetV.modbus_type === 'discrete') {
@@ -1738,7 +1740,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       <div style={{ width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem', padding: '0.2rem 0.4rem' }}>
                         {items.map((item, idx) => {
                           let isBitActive = false;
-                          const targetV = variables.find(varObj => varObj.id === item.variable_id);
+                          const targetV = targetVarList.find(varObj => varObj.id === item.variable_id);
                           let varName = item.name;
                           if (!varName && targetV) varName = targetV.display_name;
                           if (!varName) varName = `Variável ${idx + 1}`;
@@ -1813,7 +1815,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           let isBitActive = false;
                           let targetV = null;
                           if (item.variable_id) {
-                            targetV = variables.find(varObj => varObj.id === item.variable_id);
+                            targetV = targetVarList.find(varObj => varObj.id === item.variable_id);
                             if (targetV && plcState && plcState[targetV.name] !== undefined) {
                               const rawTargetVal = plcState[targetV.name];
                               if (targetV.type === 'boolean' || targetV.modbus_type === 'coil' || targetV.modbus_type === 'discrete') {
