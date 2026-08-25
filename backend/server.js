@@ -284,9 +284,16 @@ app.put('/api/variables/:id', (req, res) => {
       notifyVariablesUpdated();
       res.json({ success: true });
     });
+  } else if (category !== undefined && Object.keys(req.body).length === 1) {
+    db.run(`UPDATE variables SET category = ? WHERE id = ?`, [category, req.params.id], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      plc.reloadVariables();
+      notifyVariablesUpdated();
+      res.json({ success: true });
+    });
   } else {
-    db.run(`UPDATE variables SET device_id = ?, name = ?, display_name = ?, type = ?, unit = ?, modbus_address = ?, modbus_type = ?, decimals = ?, widget_type = ?, color = ?, category = ?, options = ?, grid_layout = COALESCE(?, grid_layout) WHERE id = ?`, 
-      [device_id, name, display_name, type, unit || '', modbus_address, modbus_type, decimals || 0, widget_type || 'value', color || '#3b82f6', category || 'supervision', JSON.stringify(options || {}), grid_layout ? (typeof grid_layout === 'string' ? grid_layout : JSON.stringify(grid_layout)) : null, req.params.id], 
+    db.run(`UPDATE variables SET device_id = COALESCE(?, device_id), name = COALESCE(?, name), display_name = COALESCE(?, display_name), type = COALESCE(?, type), unit = COALESCE(?, unit), modbus_address = COALESCE(?, modbus_address), modbus_type = COALESCE(?, modbus_type), decimals = COALESCE(?, decimals), widget_type = COALESCE(?, widget_type), color = COALESCE(?, color), category = COALESCE(?, category), options = COALESCE(?, options), grid_layout = COALESCE(?, grid_layout) WHERE id = ?`, 
+      [device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, color, category, options ? (typeof options === 'string' ? options : JSON.stringify(options)) : null, grid_layout ? (typeof grid_layout === 'string' ? grid_layout : JSON.stringify(grid_layout)) : null, req.params.id], 
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         plc.reloadVariables();

@@ -665,18 +665,41 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
 
   const handleToggleVisibility = async (v) => {
     const newCategory = v.category === 'hidden' ? 'supervision' : 'hidden';
+    let parsedOpts = {};
+    try {
+      parsedOpts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
+    } catch (e) { }
+
+    const payload = {
+      device_id: v.device_id,
+      name: v.name,
+      display_name: v.display_name,
+      type: v.type,
+      unit: v.unit || '',
+      modbus_address: v.modbus_address,
+      modbus_type: v.modbus_type,
+      decimals: v.decimals || 0,
+      widget_type: v.widget_type,
+      color: v.color || '#3b82f6',
+      category: newCategory,
+      options: parsedOpts
+    };
+
     try {
       const response = await fetch(getBaseUrl() + `/api/variables/${v.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category: newCategory })
+        body: JSON.stringify(payload)
       });
       if (response.ok) {
         showNotification(newCategory === 'hidden' ? `Variável '${v.display_name}' foi Ocultada do Dashboard` : `Variável '${v.display_name}' agora está Visível no Dashboard`, 'info');
         if (onRefresh) onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Erro ao alterar visibilidade', 'error');
       }
     } catch (e) {
-      showNotification('Erro ao alterar visibilidade', 'error');
+      showNotification('Erro ao alterar visibilidade: ' + e.message, 'error');
     }
   };
 
