@@ -543,11 +543,11 @@ class PLCService extends EventEmitter {
       let successfulReadsThisCycle = 0;
       const nowMs = Date.now();
 
-      // Helper com hard timeout de 700ms para NUNCA travar o event loop do Node
-      const withHardTimeout = (promise, timeoutMs = 700) => {
+      // Helper com hard timeout de 350ms para NUNCA travar o event loop do Node
+      const withHardTimeout = (promise, timeoutMs = 350) => {
         return Promise.race([
           promise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Modbus Timeout (700ms)')), timeoutMs))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Modbus Timeout (350ms)')), timeoutMs))
         ]);
       };
 
@@ -569,13 +569,9 @@ class PLCService extends EventEmitter {
           }
         } catch(err) {
           v._failCount = (v._failCount || 0) + 1;
-          // Após 2 falhas consecutivas, entra em cooldown por 30s para não atrasar a UI
-          if (v._failCount >= 2) {
-            v._cooldownUntil = Date.now() + 30000;
-            console.warn(`[Modbus Cooldown] Variável '${v.name}' [${type}#${addr}] em cooldown por 30s após falhar: ${err.message}`);
-          } else {
-            console.warn(`[Modbus Warning] Variável '${v.name}' [${type}#${addr}] com falha na leitura: ${err.message}`);
-          }
+          // Cooldown imediato de 30s na 1ª falha para não atrasar a UI e outras requisições HTTP/Modbus
+          v._cooldownUntil = Date.now() + 30000;
+          console.warn(`[Modbus Cooldown] Variável '${v.name}' [${type}#${addr}] em cooldown por 30s após falhar: ${err.message}`);
         }
       };
 

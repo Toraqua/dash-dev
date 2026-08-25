@@ -102,6 +102,16 @@ const logAudit = (user, action, paramName, oldValue, newValue, status = 'SUCESSO
   );
 };
 
+// Debounce para 'variables_updated': impede tempestade de re-fetches quando múltiplos layouts ou variáveis mudam
+let _varUpdatedTimer = null;
+function notifyVariablesUpdated() {
+  if (_varUpdatedTimer) clearTimeout(_varUpdatedTimer);
+  _varUpdatedTimer = setTimeout(() => {
+    _varUpdatedTimer = null;
+    io.emit('variables_updated');
+  }, 400);
+}
+
 // --- API de Autenticação ---
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
@@ -260,7 +270,7 @@ app.post('/api/variables', (req, res) => {
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       plc.reloadVariables();
-      io.emit('variables_updated');
+      notifyVariablesUpdated();
       res.json({ id: this.lastID, success: true });
   });
 });
@@ -271,7 +281,7 @@ app.put('/api/variables/:id', (req, res) => {
   if (grid_layout && Object.keys(req.body).length === 1) {
     db.run(`UPDATE variables SET grid_layout = ? WHERE id = ?`, [JSON.stringify(grid_layout), req.params.id], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      io.emit('variables_updated');
+      notifyVariablesUpdated();
       res.json({ success: true });
     });
   } else {
@@ -280,7 +290,7 @@ app.put('/api/variables/:id', (req, res) => {
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         plc.reloadVariables();
-        io.emit('variables_updated');
+        notifyVariablesUpdated();
         res.json({ success: true });
     });
   }
@@ -290,7 +300,7 @@ app.delete('/api/variables/:id', (req, res) => {
   db.run('DELETE FROM variables WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     plc.reloadVariables();
-    io.emit('variables_updated');
+    notifyVariablesUpdated();
     res.json({ success: true });
   });
 });
@@ -371,8 +381,8 @@ app.get('/api/cameras', (req, res) => {
 });
 
 app.post('/api/cameras', (req, res) => {
-  const { name, url } = req.body;
-  db.run(`INSERT INTO cameras (name, url) VALUES (?, ?)`, [name, url], function(err) {
+  const { name, url, resolution } = req.body;
+  db.run(`INSERT INTO cameras (name, url, resolution) VALUES (?, ?, ?)`, [name, url, resolution || '360p'], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ id: this.lastID, success: true });
   });
@@ -386,7 +396,7 @@ app.delete('/api/cameras/:id', (req, res) => {
 });
 
 app.put('/api/cameras/:id', (req, res) => {
-  const { name, url, grid_layout } = req.body;
+  const { name, url, resolution, grid_layout } = req.body;
   if (grid_layout) {
     db.run(`UPDATE cameras SET grid_layout = ? WHERE id = ?`, [JSON.stringify(grid_layout), req.params.id], function(err) {
       if (err) return res.status(500).json({ error: err.message });
@@ -394,8 +404,8 @@ app.put('/api/cameras/:id', (req, res) => {
     });
   } else {
     db.run(
-      `UPDATE cameras SET name = COALESCE(?, name), url = COALESCE(?, url) WHERE id = ?`,
-      [name, url, req.params.id],
+      `UPDATE cameras SET name = COALESCE(?, name), url = COALESCE(?, url), resolution = COALESCE(?, resolution) WHERE id = ?`,
+      [name, url, resolution, req.params.id],
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
@@ -426,13 +436,7 @@ function buildPacket(frame) {
   ]);
 }
 
-function startFfmpeg(camId, camUrl) {
-  // Otimizado para RPi3:
-  // - TCP evita artefatos por perda de pacote UDP em LAN
-  // - probesize/analyzeduration baixos para latência mínima
-  // - vf scale reduz resolução no servidor (menos CPU de encode e menos banda)
-  // - r 6: 6 FPS é suficiente para vigilância e economiza muito CPU no RPi3
-  // - q:v 7: qualidade JPEG moderada (menor tamanho de frame = menos banda)
+function startFfmpeg(camId, camUrl, resolution = '360p') {
   const ffmpegArgs = [
     '-fflags', 'nobuffer+discardcorrupt',
     '-flags', 'low_delay',
@@ -440,13 +444,16 @@ function startFfmpeg(camId, camUrl) {
     '-probesize', '4096',
     '-analyzeduration', '500000',
     '-rtsp_transport', 'tcp',
-    '-i', camUrl,
-    '-vf', 'scale=640:-2',
-    '-f', 'mjpeg',
-    '-q:v', '7',
-    '-r', '6',
-    '-'
+    '-i', camUrl
   ];
+
+  // Adiciona filtro de resolução se configurado
+  if (resolution === '360p') ffmpegArgs.push('-vf', 'scale=640:-2');
+  else if (resolution === '480p') ffmpegArgs.push('-vf', 'scale=854:-2');
+  else if (resolution === '720p') ffmpegArgs.push('-vf', 'scale=1280:-2');
+  else if (resolution === '1080p') ffmpegArgs.push('-vf', 'scale=1920:-2');
+
+  ffmpegArgs.push('-f', 'mjpeg', '-q:v', '7', '-r', '6', '-');
 
   const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'ignore'] });
   const stream = activeStreams[camId];
@@ -556,7 +563,7 @@ app.get('/api/cameras/:id/stream', (req, res) => {
         }
       }, 10000);
 
-      startFfmpeg(camId, cam.url);
+      startFfmpeg(camId, cam.url, cam.resolution || '360p');
     }
 
     activeStreams[camId].clients.add(res);

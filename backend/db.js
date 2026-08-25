@@ -117,9 +117,11 @@ function initDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       url TEXT NOT NULL,
-      grid_layout TEXT
+      grid_layout TEXT,
+      resolution TEXT DEFAULT '360p'
     )`);
     db.run(`ALTER TABLE cameras ADD COLUMN grid_layout TEXT`, () => {});
+    db.run(`ALTER TABLE cameras ADD COLUMN resolution TEXT DEFAULT '360p'`, () => {});
 
 
     // Tabela de Cadastro de Alarmes

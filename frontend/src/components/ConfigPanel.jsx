@@ -3,7 +3,7 @@ import {
   Save, X, Check, Plus, Trash2, Server, Edit2, TrendingUp, PieChart,
   Gauge, Table, List, Link, MapPin, Image, BarChart2, ScatterChart,
   Layout, Grid, Binary, Clock, Type, Edit3, Activity, BarChart, Info, Power,
-  ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key, Shield, Search, RefreshCw
+  ChevronRight, ChevronLeft, Sparkles, Lightbulb, Download, Upload, Calendar, FileText, Settings, Zap, Users, User, Lock, Key, Shield, Search, RefreshCw, Copy
 } from 'lucide-react';
 
 const BLOCK_TYPES = [
@@ -68,7 +68,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
   const [editingVarId, setEditingVarId] = useState(null);
 
   // Cameras State
-  const [newCam, setNewCam] = useState({ name: '', url: '' });
+  const [newCam, setNewCam] = useState({ name: '', url: '', resolution: '360p' });
   const [editingCamId, setEditingCamId] = useState(null);
 
   // Lighting State
@@ -619,6 +619,50 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     }
   };
 
+  const handleDuplicateVariable = async (v) => {
+    let parsedOpts = {};
+    try {
+      parsedOpts = typeof v.options === 'string' ? JSON.parse(v.options || '{}') : (v.options || {});
+    } catch (e) { }
+
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const newName = `${v.name}_copy_${randomSuffix}`;
+    const newDisplayName = `${v.display_name} (Cópia)`;
+
+    const payload = {
+      device_id: v.device_id,
+      name: newName,
+      display_name: newDisplayName,
+      type: v.type,
+      unit: v.unit || '',
+      modbus_address: (parseInt(v.modbus_address) || 0) + 1,
+      modbus_type: v.modbus_type,
+      decimals: v.decimals || 0,
+      widget_type: v.widget_type,
+      color: v.color || '#3b82f6',
+      category: v.category || 'supervision',
+      options: parsedOpts
+    };
+
+    try {
+      const response = await fetch(getBaseUrl() + '/api/variables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        showNotification(`Variável duplicada como '${newDisplayName}'!`, 'success');
+        if (onRefresh) onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Erro ao duplicar variável', 'error');
+      }
+    } catch (e) {
+      showNotification('Erro de conexão', 'error');
+    }
+  };
+
   const handleAddCamera = async () => {
     try {
       let response;
@@ -637,7 +681,7 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
       }
       if (response.ok) {
         showNotification(editingCamId ? 'Câmera atualizada!' : 'Câmera adicionada!', 'success');
-        setNewCam({ name: '', url: '' });
+        setNewCam({ name: '', url: '', resolution: '360p' });
         setEditingCamId(null);
         if (onRefresh) onRefresh();
       } else {
@@ -653,7 +697,8 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     setEditingCamId(c.id);
     setNewCam({
       name: c.name,
-      url: c.url
+      url: c.url,
+      resolution: c.resolution || '360p'
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -860,99 +905,105 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                 <label className="form-label">Título Exibido no Painel</label>
                 <input type="text" className="form-input" placeholder="ex: Corrente Linha 1" value={newVar.display_name} onChange={e => setNewVar({ ...newVar, display_name: e.target.value })} />
               </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-              <div className="form-group" style={{ marginBottom: 0, width: '120px' }}>
-                <label className="form-label">Função Modbus</label>
-                <select className="form-input" value={newVar.modbus_type} onChange={e => setNewVar({ ...newVar, modbus_type: e.target.value })}>
-                  <option value="holding">Holding Reg</option>
-                  <option value="input">Input Reg</option>
-                  <option value="coil">Coil (Write)</option>
-                  <option value="discrete">Discrete Input</option>
-                </select>
+            {newVar.widget_type === 'variable_list' ? (
+              <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)', padding: '0.75rem 1rem', borderRadius: '6px', width: '100%', fontSize: '0.875rem', color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Info size={18} />
+                <span><strong>Bloco Agrupador (Lista de Variáveis):</strong> Este widget agrupa outras variáveis individuais em uma lista limpa. Selecione as variáveis que deseja exibir na seção <i>"Mapeamento de Variáveis na Lista"</i> abaixo.</span>
               </div>
-              <div className="form-group" style={{ marginBottom: 0, width: '110px' }}>
-                <label className="form-label" title="Endereço Offset 0-based. Ex: 40029 no CLP é Endereço 28 (40029 - 40001)">Endereço</label>
-                <input type="number" className="form-input" value={newVar.modbus_address} onChange={e => setNewVar({ ...newVar, modbus_address: parseInt(e.target.value) })} title="Ex: 40029 no CLP = Endereço 28" />
+            ) : (
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ marginBottom: 0, width: '120px' }}>
+                  <label className="form-label">Função Modbus</label>
+                  <select className="form-input" value={newVar.modbus_type} onChange={e => setNewVar({ ...newVar, modbus_type: e.target.value })}>
+                    <option value="holding">Holding Reg</option>
+                    <option value="input">Input Reg</option>
+                    <option value="coil">Coil (Write)</option>
+                    <option value="discrete">Discrete Input</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, width: '110px' }}>
+                  <label className="form-label" title="Endereço Offset 0-based. Ex: 40029 no CLP é Endereço 28 (40029 - 40001)">Endereço</label>
+                  <input type="number" className="form-input" value={newVar.modbus_address} onChange={e => setNewVar({ ...newVar, modbus_address: parseInt(e.target.value) })} title="Ex: 40029 no CLP = Endereço 28" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, width: '80px' }}>
+                  <label className="form-label">Decimais</label>
+                  <input type="number" className="form-input" value={newVar.decimals} onChange={e => setNewVar({ ...newVar, decimals: parseInt(e.target.value) })} title="Ex: 2 para dividir por 100" />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, width: '80px' }}>
+                  <label className="form-label">Unidade</label>
+                  <input type="text" className="form-input" placeholder="A" value={newVar.unit} onChange={e => setNewVar({ ...newVar, unit: e.target.value })} />
+                </div>
+
+                {(newVar.modbus_type === 'holding' || newVar.modbus_type === 'input') && (
+                  <>
+                    <div className="form-group" style={{ marginBottom: 0, width: '160px' }}>
+                      <label className="form-label">Formato (Bits)</label>
+                      <select
+                        className="form-input"
+                        value={newVar.options?.data_format || '16_int'}
+                        onChange={e => setNewVar({
+                          ...newVar,
+                          options: { ...(newVar.options || {}), data_format: e.target.value }
+                        })}
+                      >
+                        <option value="16_int">16 bits (1 Reg - Int16)</option>
+                        <option value="16_uint">16 bits (1 Reg - UInt16)</option>
+                        <option value="32_float">32 bits (2 Regs - Float IEEE 754)</option>
+                        <option value="32_int">32 bits (2 Regs - Int32)</option>
+                        <option value="32_uint">32 bits (2 Regs - UInt32)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: 0, width: '190px' }}>
+                      <label className="form-label">Endianness</label>
+                      <select
+                        className="form-input"
+                        value={newVar.options?.endianness || 'ABCD'}
+                        onChange={e => setNewVar({
+                          ...newVar,
+                          options: { ...(newVar.options || {}), endianness: e.target.value }
+                        })}
+                      >
+                        <option value="ABCD">ABCD (Big word e big byte)</option>
+                        <option value="BADC">BADC (Big word e little byte)</option>
+                        <option value="DCBA">DCBA (Little word e little byte)</option>
+                        <option value="CDAB">CDAB (Little word e big byte)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: 0, width: '90px' }}>
+                      <label className="form-label">Escala</label>
+                      <input
+                        type="number"
+                        step="any"
+                        className="form-input"
+                        value={newVar.options?.scale !== undefined ? newVar.options.scale : 1}
+                        onChange={e => setNewVar({
+                          ...newVar,
+                          options: { ...(newVar.options || {}), scale: parseFloat(e.target.value) || 1 }
+                        })}
+                        title="Fator de multiplicação da escala (padrão 1.0)"
+                      />
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: 0, width: '90px' }}>
+                      <label className="form-label">Offset</label>
+                      <input
+                        type="number"
+                        step="any"
+                        className="form-input"
+                        value={newVar.options?.offset !== undefined ? newVar.options.offset : 0}
+                        onChange={e => setNewVar({
+                          ...newVar,
+                          options: { ...(newVar.options || {}), offset: parseFloat(e.target.value) || 0 }
+                        })}
+                        title="Valor de offset/deslocamento (padrão 0.0)"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
-              <div className="form-group" style={{ marginBottom: 0, width: '80px' }}>
-                <label className="form-label">Decimais</label>
-                <input type="number" className="form-input" value={newVar.decimals} onChange={e => setNewVar({ ...newVar, decimals: parseInt(e.target.value) })} title="Ex: 2 para dividir por 100" />
-              </div>
-              <div className="form-group" style={{ marginBottom: 0, width: '80px' }}>
-                <label className="form-label">Unidade</label>
-                <input type="text" className="form-input" placeholder="A" value={newVar.unit} onChange={e => setNewVar({ ...newVar, unit: e.target.value })} />
-              </div>
-
-              {(newVar.modbus_type === 'holding' || newVar.modbus_type === 'input') && (
-                <>
-                  <div className="form-group" style={{ marginBottom: 0, width: '160px' }}>
-                    <label className="form-label">Formato (Bits)</label>
-                    <select
-                      className="form-input"
-                      value={newVar.options?.data_format || '16_int'}
-                      onChange={e => setNewVar({
-                        ...newVar,
-                        options: { ...(newVar.options || {}), data_format: e.target.value }
-                      })}
-                    >
-                      <option value="16_int">16 bits (1 Reg - Int16)</option>
-                      <option value="16_uint">16 bits (1 Reg - UInt16)</option>
-                      <option value="32_float">32 bits (2 Regs - Float IEEE 754)</option>
-                      <option value="32_int">32 bits (2 Regs - Int32)</option>
-                      <option value="32_uint">32 bits (2 Regs - UInt32)</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0, width: '190px' }}>
-                    <label className="form-label">Endianness</label>
-                    <select
-                      className="form-input"
-                      value={newVar.options?.endianness || 'ABCD'}
-                      onChange={e => setNewVar({
-                        ...newVar,
-                        options: { ...(newVar.options || {}), endianness: e.target.value }
-                      })}
-                    >
-                      <option value="ABCD">ABCD (Big word e big byte)</option>
-                      <option value="BADC">BADC (Big word e little byte)</option>
-                      <option value="DCBA">DCBA (Little word e little byte)</option>
-                      <option value="CDAB">CDAB (Little word e big byte)</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0, width: '90px' }}>
-                    <label className="form-label">Escala</label>
-                    <input
-                      type="number"
-                      step="any"
-                      className="form-input"
-                      value={newVar.options?.scale !== undefined ? newVar.options.scale : 1}
-                      onChange={e => setNewVar({
-                        ...newVar,
-                        options: { ...(newVar.options || {}), scale: parseFloat(e.target.value) || 1 }
-                      })}
-                      title="Fator de multiplicação da escala (padrão 1.0)"
-                    />
-                  </div>
-
-                  <div className="form-group" style={{ marginBottom: 0, width: '90px' }}>
-                    <label className="form-label">Offset</label>
-                    <input
-                      type="number"
-                      step="any"
-                      className="form-input"
-                      value={newVar.options?.offset !== undefined ? newVar.options.offset : 0}
-                      onChange={e => setNewVar({
-                        ...newVar,
-                        options: { ...(newVar.options || {}), offset: parseFloat(e.target.value) || 0 }
-                      })}
-                      title="Valor de offset/deslocamento (padrão 0.0)"
-                    />
-                  </div>
-                </>
-              )}
+            )}
 
               <div className="form-group" style={{ marginBottom: 0, minWidth: '180px', flex: 1 }}>
                 <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1243,10 +1294,13 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--color-primary)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleEditVariable(v)}>
+                    <button className="btn" style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '0.5rem', cursor: 'pointer' }} title="Duplicar / Copiar Variável" onClick={() => handleDuplicateVariable(v)}>
+                      <Copy size={16} />
+                    </button>
+                    <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--color-primary)', padding: '0.5rem', cursor: 'pointer' }} title="Editar Variável" onClick={() => handleEditVariable(v)}>
                       <Edit2 size={16} />
                     </button>
-                    <button className="btn" style={{ background: 'rgba(239,68,68,0.2)', color: 'var(--color-danger)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleDeleteVariable(v.id)}>
+                    <button className="btn" style={{ background: 'rgba(239,68,68,0.2)', color: 'var(--color-danger)', padding: '0.5rem', cursor: 'pointer' }} title="Excluir Variável" onClick={() => handleDeleteVariable(v.id)}>
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -1259,7 +1313,6 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
       )}
 
       {activeTab === 'cameras' && (
-        // Camera tab remains exactly the same
         <div>
           <h3 style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{editingCamId ? 'Editar Câmera RTSP / HTTP' : 'Adicionar Câmera RTSP / HTTP'}</h3>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '2rem', flexWrap: 'wrap' }}>
@@ -1267,15 +1320,25 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
               <label className="form-label">Nome da Câmera</label>
               <input type="text" className="form-input" value={newCam.name} onChange={e => setNewCam({ ...newCam, name: e.target.value })} />
             </div>
-            <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: '250px' }}>
-              <label className="form-label">URL do Stream (ex: http://ip:port/stream)</label>
+            <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: '220px' }}>
+              <label className="form-label">URL do Stream (ex: rtsp://...)</label>
               <input type="text" className="form-input" value={newCam.url} onChange={e => setNewCam({ ...newCam, url: e.target.value })} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0, width: '160px' }}>
+              <label className="form-label">Resolução Stream</label>
+              <select className="form-input" value={newCam.resolution || '360p'} onChange={e => setNewCam({ ...newCam, resolution: e.target.value })}>
+                <option value="360p">360p (640x360 - Leve RPi3)</option>
+                <option value="480p">480p (854x480 - SD)</option>
+                <option value="720p">720p (1280x720 - HD)</option>
+                <option value="1080p">1080p (1920x1080 - Full HD)</option>
+                <option value="original">Original (Nativa Câmera)</option>
+              </select>
             </div>
             <button className="btn btn-primary" onClick={handleAddCamera} disabled={!newCam.name || !newCam.url}>
               {editingCamId ? <><Save size={16} /> Salvar</> : <><Plus size={16} /> Adicionar</>}
             </button>
             {editingCamId && (
-              <button className="btn" onClick={() => { setEditingCamId(null); setNewCam({ name: '', url: '' }); }} style={{ background: 'rgba(255,255,255,0.1)' }}>
+              <button className="btn" onClick={() => { setEditingCamId(null); setNewCam({ name: '', url: '', resolution: '360p' }); }} style={{ background: 'rgba(255,255,255,0.1)' }}>
                 Cancelar
               </button>
             )}
@@ -1285,8 +1348,11 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {cameras.map(c => (
               <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', background: 'var(--bg-subcard)', borderRadius: '8px', alignItems: 'center', border: '1px solid var(--border-color)' }}>
-                <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <strong>{c.name}</strong> <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>({c.url})</span>
+                  <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', borderRadius: '12px', fontWeight: 600 }}>
+                    {c.resolution || '360p'}
+                  </span>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button className="btn" style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--color-primary)', padding: '0.5rem', cursor: 'pointer' }} onClick={() => handleEditCamera(c)}>
