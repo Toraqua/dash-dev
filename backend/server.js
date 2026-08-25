@@ -31,27 +31,63 @@ app.use(express.static(distPath));
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  // Compressão reduz tráfego de rede — crucial para RPi3 com vários clientes
+  perMessageDeflate: {
+    threshold: 512,
+    zlibDeflateOptions: { chunkSize: 1024, memLevel: 3, level: 1 },
+    clientNoContextTakeover: true,
+    serverNoContextTakeover: true,
+  },
+  // Pings mais lentos para não sobrecarregar o RPi3 com keep-alives
+  pingInterval: 30000,
+  pingTimeout: 15000,
+  // Limita tamanho de mensagem para evitar estouro de buffer
+  maxHttpBufferSize: 1e5,
+  // Força polling longo primeiro, depois upgrade para WS (mais estável em RPi)
+  transports: ['websocket', 'polling'],
 });
 
 // WebSocket para Atualizações em Tempo Real
 io.on('connection', (socket) => {
-  console.log('Cliente conectado:', socket.id);
-  
-  socket.emit('config', plc.config);
+  // Envia estado inicial ao novo cliente
   socket.emit('update', { state: plc.state, lastReadTimes: plc.lastReadTimes });
 
   socket.on('disconnect', () => {
-    console.log('Cliente desconectado:', socket.id);
+    // Silencioso em produção para não lotar o journalctl
   });
 });
 
+// Throttle de telemetria: no máximo 1 emissão/segundo para não saturar o RPi3
+// com múltiplos clientes conectados. Usa volatile para descartar se a fila estiver cheia.
+let _lastTelemetryEmit = 0;
+let _pendingTelemetry = null;
+let _telemetryTimer = null;
+
 plc.on('update', (data) => {
-  io.volatile.emit('update', data);
-  // Compatibilidade com o gateway que espera apenas o estado
+  _pendingTelemetry = data;
+  const now = Date.now();
+  const elapsed = now - _lastTelemetryEmit;
+  if (elapsed >= 1000) {
+    // Pode emitir agora
+    _lastTelemetryEmit = now;
+    io.volatile.emit('update', data);
+    _pendingTelemetry = null;
+    if (_telemetryTimer) { clearTimeout(_telemetryTimer); _telemetryTimer = null; }
+  } else if (!_telemetryTimer) {
+    // Agenda próxima emissão para completar o intervalo de 1s
+    _telemetryTimer = setTimeout(() => {
+      _telemetryTimer = null;
+      if (_pendingTelemetry) {
+        _lastTelemetryEmit = Date.now();
+        io.volatile.emit('update', _pendingTelemetry);
+        _pendingTelemetry = null;
+        // Repassa ao gateway com o último estado disponível
+        gatewayService.publishTelemetry(_pendingTelemetry?.state || _pendingTelemetry || {});
+      }
+    }, 1000 - elapsed);
+  }
+  // Sempre repassa ao gateway
   gatewayService.publishTelemetry(data.state || data);
 });
 
@@ -369,21 +405,46 @@ app.put('/api/cameras/:id', (req, res) => {
 });
 
 // --- Proxy de Stream RTSP → MJPEG via FFmpeg ---
-// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients, buffer, lastFrameAt, watchdog } }
+// Constantes pré-alocadas fora dos callbacks para zero overhead de GC
+const SOI = Buffer.from([0xFF, 0xD8]);
+const EOI = Buffer.from([0xFF, 0xD9]);
+const CRLF = Buffer.from('\r\n');
+const BOUNDARY_PREFIX = Buffer.from('--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ');
+const HEADER_SUFFIX = Buffer.from('\r\n\r\n');
+
+// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients, chunks, chunkLen, lastFrameAt, watchdog } }
 const activeStreams = {};
 
+function buildPacket(frame) {
+  const lenStr = Buffer.from(String(frame.length));
+  return Buffer.concat([
+    BOUNDARY_PREFIX,
+    lenStr,
+    HEADER_SUFFIX,
+    frame,
+    CRLF
+  ]);
+}
+
 function startFfmpeg(camId, camUrl) {
+  // Otimizado para RPi3:
+  // - TCP evita artefatos por perda de pacote UDP em LAN
+  // - probesize/analyzeduration baixos para latência mínima
+  // - vf scale reduz resolução no servidor (menos CPU de encode e menos banda)
+  // - r 6: 6 FPS é suficiente para vigilância e economiza muito CPU no RPi3
+  // - q:v 7: qualidade JPEG moderada (menor tamanho de frame = menos banda)
   const ffmpegArgs = [
-    '-fflags', 'nobuffer',
+    '-fflags', 'nobuffer+discardcorrupt',
     '-flags', 'low_delay',
     '-avioflags', 'direct',
-    '-probesize', '32',
-    '-analyzeduration', '0',
-    '-rtsp_transport', 'udp',
+    '-probesize', '4096',
+    '-analyzeduration', '500000',
+    '-rtsp_transport', 'tcp',
     '-i', camUrl,
+    '-vf', 'scale=640:-2',
     '-f', 'mjpeg',
-    '-q:v', '5',
-    '-r', '8',
+    '-q:v', '7',
+    '-r', '6',
     '-'
   ];
 
@@ -391,58 +452,63 @@ function startFfmpeg(camId, camUrl) {
   const stream = activeStreams[camId];
   if (!stream) return;
   stream.proc = proc;
-  stream.buffer = Buffer.alloc(0);
+  // Usa array de chunks + comprimento total em vez de Buffer.concat a cada frame
+  // Isso evita alocações O(n) contínuas que travam o event loop do Node no RPi3
+  stream.chunks = [];
+  stream.chunkLen = 0;
   stream.lastFrameAt = Date.now();
 
   proc.stdout.on('data', (chunk) => {
     const s = activeStreams[camId];
-    if (!s) return;
+    if (!s || !s.clients.size) return; // Descarta se não há clientes
     s.lastFrameAt = Date.now();
-    s.buffer = Buffer.concat([s.buffer, chunk]);
 
-    // Anti-drift: se buffer > 300KB, descartar frames antigos até o último SOI
-    if (s.buffer.length > 300 * 1024) {
-      const SOI_marker = Buffer.from([0xFF, 0xD8]);
-      const lastSoi = s.buffer.lastIndexOf(SOI_marker);
-      if (lastSoi > 0) {
-        console.log(`[Camera ${camId}] Buffer drift (${(s.buffer.length/1024).toFixed(0)}KB). Descartando frames antigos.`);
-        s.buffer = s.buffer.slice(lastSoi);
-      }
+    s.chunks.push(chunk);
+    s.chunkLen += chunk.length;
+
+    // Anti-drift: se o buffer acumulado > 200KB, descarta tudo exceto o último chunk
+    // (o último chunk do FFmpeg já é um frame JPEG completo na maioria dos casos)
+    if (s.chunkLen > 200 * 1024) {
+      s.chunks = [chunk];
+      s.chunkLen = chunk.length;
     }
 
-    const SOI = Buffer.from([0xFF, 0xD8]);
-    const EOI = Buffer.from([0xFF, 0xD9]);
-    let searchFrom = 0;
-    while (true) {
-      const start = s.buffer.indexOf(SOI, searchFrom);
-      if (start === -1) break;
-      const end = s.buffer.indexOf(EOI, start + 2);
-      if (end === -1) break;
-      const frame = s.buffer.slice(start, end + 2);
-      s.buffer = s.buffer.slice(end + 2);
-      searchFrom = 0;
-      const header = Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
-      const packet = Buffer.concat([header, frame, Buffer.from('\r\n')]);
+    // Combina os chunks acumulados para parsing de frames
+    const buf = s.chunks.length === 1 ? s.chunks[0] : Buffer.concat(s.chunks);
+    s.chunks = [];
+    s.chunkLen = 0;
 
-      // Transmissão com proteção de backpressure: descarta frames para clientes lentos/abas em segundo plano
+    let pos = 0;
+    while (pos < buf.length) {
+      const start = buf.indexOf(SOI, pos);
+      if (start === -1) break;
+      const end = buf.indexOf(EOI, start + 2);
+      if (end === -1) {
+        // Frame incompleto — guarda o restante para o próximo chunk
+        s.chunks = [buf.slice(start)];
+        s.chunkLen = s.chunks[0].length;
+        break;
+      }
+      const frame = buf.slice(start, end + 2);
+      pos = end + 2;
+
+      const packet = buildPacket(frame);
+
+      // Backpressure: descarta frame para clientes com buffer HTTP cheio (> 128KB)
+      // Isso protege a RAM do RPi3 quando abas em background não consomem dados
       s.clients.forEach(client => {
         if (client.destroyed || client.writableEnded) return;
-        // Se a resposta HTTP do cliente estiver com o buffer cheio (>64KB), descarta o frame para evitar estouro de RAM
-        if (client.writableLength > 64 * 1024 || client.writableNeedDrain) {
-          return;
-        }
+        if (client.writableLength > 128 * 1024) return;
         try { client.write(packet); } catch (_) {}
       });
     }
   });
 
   proc.on('exit', (code) => {
-    console.log(`[Camera ${camId}] FFmpeg encerrado (código ${code})`);
     if (activeStreams[camId] && activeStreams[camId].clients.size > 0) {
-      console.log(`[Camera ${camId}] Reiniciando FFmpeg automaticamente...`);
       setTimeout(() => {
         if (activeStreams[camId] && activeStreams[camId].clients.size > 0) startFfmpeg(camId, camUrl);
-      }, 1000);
+      }, 2000);
     } else if (activeStreams[camId]) {
       clearInterval(activeStreams[camId].watchdog);
       delete activeStreams[camId];
@@ -470,23 +536,25 @@ app.get('/api/cameras/:id/stream', (req, res) => {
       'Pragma': 'no-cache',
       'Expires': '0',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      'Access-Control-Allow-Origin': '*',
+      // Desabilita buffering de resposta no Nginx/proxy (se houver)
+      'X-Accel-Buffering': 'no',
     });
 
     if (!activeStreams[camId]) {
       console.log(`[Camera ${camId}] Iniciando FFmpeg para: ${cam.url.replace(/:([^@]+)@/, ':***@')}`);
-      activeStreams[camId] = { proc: null, clients: new Set(), buffer: Buffer.alloc(0), lastFrameAt: Date.now(), watchdog: null };
+      activeStreams[camId] = { proc: null, clients: new Set(), chunks: [], chunkLen: 0, lastFrameAt: Date.now(), watchdog: null };
 
-      // Watchdog: reinicia FFmpeg se ficou 15s sem frames
+      // Watchdog: reinicia FFmpeg se ficou 20s sem frames
       activeStreams[camId].watchdog = setInterval(() => {
         const s = activeStreams[camId];
         if (!s) return;
         const age = Date.now() - s.lastFrameAt;
-        if (age > 15000 && s.clients.size > 0) {
-          console.log(`[Camera ${camId}] Sem frames há ${(age/1000).toFixed(0)}s. Reiniciando FFmpeg (watchdog).`);
-          try { s.proc.kill('SIGTERM'); } catch (_) {}
+        if (age > 20000 && s.clients.size > 0) {
+          console.log(`[Camera ${camId}] Watchdog: sem frames há ${(age/1000).toFixed(0)}s. Reiniciando.`);
+          try { s.proc && s.proc.kill('SIGTERM'); } catch (_) {}
         }
-      }, 5000);
+      }, 10000);
 
       startFfmpeg(camId, cam.url);
     }

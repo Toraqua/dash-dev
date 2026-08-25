@@ -234,12 +234,17 @@ function App() {
   useEffect(() => {
     // Conectar ao backend (usa proxy / caminho relativo em produção, ou URL direta se configurada)
     const socketUrl = import.meta.env.VITE_API_URL || (window.location.port === '5173' ? 'http://localhost:3001' : undefined);
-    const newSocket = io(socketUrl);
-    setSocket(newSocket);
-
-    newSocket.on('connect', () => {
-      console.log('Conectado ao servidor via WS');
+    const newSocket = io(socketUrl, {
+      // Alinhado com as configurações de ping do servidor (30s/15s)
+      timeout: 20000,
+      // Backoff exponencial lento para não sobrecarregar o RPi3 com reconexões rápidas
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: 10,
+      // WebSocket direto — mais eficiente que polling no RPi3
+      transports: ['websocket'],
     });
+    setSocket(newSocket);
 
     newSocket.on('update', (data) => {
       // payload data agora é { state, lastReadTimes }
@@ -266,7 +271,6 @@ function App() {
     });
 
     newSocket.on('disconnect', () => {
-      console.log('Desconectado do servidor');
       setPlcState(prev => ({ ...prev, connected: false }));
     });
 
