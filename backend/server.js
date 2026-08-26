@@ -315,9 +315,41 @@ app.delete('/api/variables/:id', (req, res) => {
 // --- API Histórico ---
 app.get('/api/history/:variableId', (req, res) => {
   const limit = parseInt(req.query.limit) || 50000;
-  db.all(`SELECT timestamp, value FROM variable_history WHERE variable_id = ? ORDER BY timestamp DESC LIMIT ?`, [req.params.variableId, limit], (err, rows) => {
+  const minutes = parseInt(req.query.minutes) || null;
+
+  let query = 'SELECT timestamp, value FROM variable_history WHERE variable_id = ?';
+  const params = [req.params.variableId];
+
+  if (minutes && !isNaN(minutes)) {
+    const cutoffIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    query += ' AND timestamp >= ?';
+    params.push(cutoffIso);
+  }
+
+  query += ' ORDER BY timestamp ASC LIMIT ?';
+  params.push(limit);
+
+  db.all(query, params, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows.reverse()); // Chronological order
+    if (!rows || rows.length === 0) return res.json([]);
+
+    // Decimação/Downsampling inteligente no servidor se houver muitos registros
+    // Garante resposta super leve para o RPi3 sem travar a interface
+    const maxTargetPoints = 1500;
+    if (rows.length <= maxTargetPoints) {
+      return res.json(rows);
+    }
+
+    const step = Math.ceil(rows.length / maxTargetPoints);
+    const sampled = [];
+    for (let i = 0; i < rows.length; i += step) {
+      sampled.push(rows[i]);
+    }
+    if (sampled[sampled.length - 1] !== rows[rows.length - 1]) {
+      sampled.push(rows[rows.length - 1]);
+    }
+
+    res.json(sampled);
   });
 });
 

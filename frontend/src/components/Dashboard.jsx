@@ -605,16 +605,6 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     }
   });
 
-  const handleTimeRangeChange = (varId, minutes) => {
-    setTimeRanges(prev => {
-      const next = { ...prev, [varId]: minutes };
-      try {
-        localStorage.setItem('kronox_graph_timeranges', JSON.stringify(next));
-      } catch (e) {}
-      return next;
-    });
-  };
-
   const getBaseUrl = () => {
     if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
     if (typeof window !== 'undefined' && window.location && window.location.hostname) {
@@ -624,9 +614,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     return 'http://localhost:3001';
   };
 
-
-
-  const formatTime = (ts) => {
+  const formatTime = (ts, rangeMinutes = 10) => {
     if (!ts) return '';
     try {
       let d;
@@ -637,10 +625,43 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
       }
       if (isNaN(d.getTime())) return String(ts);
       const tz = generalConfig?.timezone || 'America/Sao_Paulo';
+      if (rangeMinutes > 1440) {
+        return d.toLocaleString('pt-BR', { timeZone: tz, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      }
       return d.toLocaleTimeString('pt-BR', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch (e) {
       return String(ts);
     }
+  };
+
+  const fetchVariableHistory = useCallback((varId, minutes = 10) => {
+    fetch(getBaseUrl() + `/api/history/${varId}?minutes=${minutes}`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const formatted = data.map(d => {
+            const dObj = new Date(d.timestamp && !d.timestamp.includes('Z') && !d.timestamp.includes('+') ? d.timestamp.replace(' ', 'T') + 'Z' : d.timestamp);
+            return {
+              time: formatTime(d.timestamp, minutes),
+              val: parseFloat(d.value) || 0,
+              raw_ts: isNaN(dObj.getTime()) ? Date.now() : dObj.getTime()
+            };
+          });
+          setHistoryData(prev => ({ ...prev, [varId]: formatted }));
+        }
+      })
+      .catch(console.error);
+  }, [generalConfig?.timezone]);
+
+  const handleTimeRangeChange = (varId, minutes) => {
+    setTimeRanges(prev => {
+      const next = { ...prev, [varId]: minutes };
+      try {
+        localStorage.setItem('kronox_graph_timeranges', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+    fetchVariableHistory(varId, minutes);
   };
 
   const getFilteredGraphData = (varId) => {
@@ -662,28 +683,14 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     return sampled;
   };
 
-  // Carregar histórico das variáveis do tipo gráfico e tabela (limite otimizado para 2000 registros)
+  // Carregar histórico das variáveis respeitando o intervalo de tempo selecionado
   useEffect(() => {
     const graphVars = variables.filter(v => v.widget_type === 'graph' || v.widget_type === 'timeseries' || v.widget_type === 'table');
     graphVars.forEach(v => {
-      fetch(getBaseUrl() + `/api/history/${v.id}?limit=2000`)
-        .then(res => res.json())
-        .then(data => {
-          setHistoryData(prev => ({
-            ...prev,
-            [v.id]: data.map(d => {
-              const dObj = new Date(d.timestamp && !d.timestamp.includes('Z') && !d.timestamp.includes('+') ? d.timestamp.replace(' ', 'T') + 'Z' : d.timestamp);
-              return {
-                time: formatTime(d.timestamp),
-                val: d.value,
-                raw_ts: isNaN(dObj.getTime()) ? Date.now() : dObj.getTime()
-              };
-            })
-          }));
-        })
-        .catch(console.error);
+      const minutes = timeRanges[v.id] !== undefined ? timeRanges[v.id] : 10;
+      fetchVariableHistory(v.id, minutes);
     });
-  }, [variables, generalConfig?.timezone]);
+  }, [variables, generalConfig?.timezone, fetchVariableHistory]);
 
   // Atualizar o gráfico e tempos de leitura em tempo real a cada leitura
   useEffect(() => {
@@ -709,8 +716,9 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
             // Só adicionar um novo ponto se passou tempo suficiente desde o último
             // (não adicionar a cada poll — evita tremor no gráfico)
             if (!lastItem || (nowMs - lastItem.raw_ts >= chartIntervalMs)) {
-              const newArr = [...currentArr, { time: nowTime, val: rawVal, raw_ts: nowMs }];
-              if (newArr.length > 2000) newArr.shift();
+              const minutes = timeRanges[v.id] !== undefined ? timeRanges[v.id] : 10;
+              const newArr = [...currentArr, { time: formatTime(nowMs, minutes), val: rawVal, raw_ts: nowMs }];
+              if (newArr.length > 3500) newArr.shift();
               next[v.id] = newArr;
               updated = true;
             }
