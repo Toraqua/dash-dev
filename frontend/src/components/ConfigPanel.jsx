@@ -50,6 +50,9 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
     offset: 0,
     bit_index: -1,
     button_mode: 'toggle',
+    same_read_var: true,
+    read_variable_id: '',
+    read_bit_index: -1,
     min_val: 0,
     max_val: 100,
     label_off: 'DESLIGADO',
@@ -1080,23 +1083,85 @@ function ConfigPanel({ socket, variables = [], cameras = [], devices = [], gener
                   {/* Seletor de modo de operação — disponível para switch e bit_button */}
                   {/* bitmap é sempre read-only, portanto não exibe este seletor */}
                   {(newVar.widget_type === 'bit_button' || newVar.widget_type === 'switch') && (
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Modo de Funcionamento do Botão</label>
-                      <select
-                        className="form-input"
-                        value={newVar.options?.button_mode || 'toggle'}
-                        onChange={e => setNewVar({
-                          ...newVar,
-                          options: { ...(newVar.options || {}), button_mode: e.target.value }
-                        })}
-                      >
-                        <option value="toggle">Alternar Estado (Toggle - 0 ↔ 1)</option>
-                        <option value="set">Ligar Bit (Set Bit - Escreve 1)</option>
-                        <option value="reset">Desligar Bit (Reset Bit - Escreve 0)</option>
-                        <option value="momentary_on">Pulsador Normal Aberto (Momentâneo 1 enquanto pressionado)</option>
-                        <option value="momentary_off">Pulsador Normal Fechado (Momentâneo 0 enquanto pressionado)</option>
-                      </select>
-                    </div>
+                    <>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Modo de Funcionamento do Botão</label>
+                        <select
+                          className="form-input"
+                          value={newVar.options?.button_mode || 'toggle'}
+                          onChange={e => setNewVar({
+                            ...newVar,
+                            options: { ...(newVar.options || {}), button_mode: e.target.value }
+                          })}
+                        >
+                          <option value="toggle">Alternar Estado (Toggle - 0 ↔ 1)</option>
+                          <option value="set">Ligar Bit (Set Bit - Escreve 1)</option>
+                          <option value="reset">Desligar Bit (Reset Bit - Escreve 0)</option>
+                          <option value="momentary_on">Pulsador Normal Aberto (Momentâneo 1 enquanto pressionado)</option>
+                          <option value="momentary_off">Pulsador Normal Fechado (Momentâneo 0 enquanto pressionado)</option>
+                        </select>
+                      </div>
+
+                      {/* Bloco para selecionar variável de leitura/feedback separada */}
+                      <div style={{ background: 'rgba(0,0,0,0.2)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                          <input
+                            type="checkbox"
+                            checked={newVar.options?.same_read_var !== false}
+                            onChange={e => setNewVar({
+                              ...newVar,
+                              options: { ...(newVar.options || {}), same_read_var: e.target.checked }
+                            })}
+                          />
+                          Variável de leitura (feedback de status) é a mesma de escrita (comando)
+                        </label>
+
+                        {newVar.options?.same_read_var === false && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.25rem' }}>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                              <label className="form-label">Variável de Leitura (Feedback de Status)</label>
+                              <select
+                                className="form-input"
+                                value={newVar.options?.read_variable_id || ''}
+                                onChange={e => setNewVar({
+                                  ...newVar,
+                                  options: { ...(newVar.options || {}), read_variable_id: e.target.value }
+                                })}
+                              >
+                                <option value="">Selecione a variável de feedback...</option>
+                                {variables.map(v => (
+                                  <option key={v.id} value={v.id}>{v.display_name} ({v.name})</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {(() => {
+                              const selectedReadVar = variables.find(vObj => String(vObj.id) === String(newVar.options?.read_variable_id));
+                              const isReadWord = selectedReadVar && (selectedReadVar.modbus_type === 'holding' || selectedReadVar.modbus_type === 'input');
+                              if (!isReadWord) return null;
+                              return (
+                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                  <label className="form-label">Bit Específico de Leitura (Word)</label>
+                                  <select
+                                    className="form-input"
+                                    value={newVar.options?.read_bit_index !== undefined ? newVar.options.read_bit_index : -1}
+                                    onChange={e => setNewVar({
+                                      ...newVar,
+                                      options: { ...(newVar.options || {}), read_bit_index: parseInt(e.target.value) }
+                                    })}
+                                  >
+                                    <option value={-1}>Palavra Inteira (Valor &gt; 0)</option>
+                                    {[...Array(16)].map((_, bit) => (
+                                      <option key={bit} value={bit}>Bit #{bit} (Máscara 0x{((1 << bit).toString(16)).toUpperCase().padStart(4, '0')})</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    </>
                   )}
 
                   {(newVar.modbus_type === 'holding' || newVar.modbus_type === 'input') && (

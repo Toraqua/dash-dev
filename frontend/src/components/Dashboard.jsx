@@ -937,6 +937,30 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   isBitActive = (numVal & (1 << opts.bit_index)) !== 0;
                 }
 
+                if ((v.widget_type === 'bit_button' || v.widget_type === 'switch') && opts.same_read_var === false && opts.read_variable_id) {
+                  const readVarObj = targetVarList.find(vObj => String(vObj.id) === String(opts.read_variable_id));
+                  if (readVarObj && plcState) {
+                    const rawReadVal = plcState[readVarObj.name] !== undefined ? plcState[readVarObj.name] : plcState[readVarObj.display_name];
+                    if (rawReadVal !== undefined) {
+                      const rType = String(readVarObj.modbus_type || '').toLowerCase();
+                      const isReadWord = rType === 'holding' || rType === 'holdingregister' || rType === 'input' || rType === 'inputregister';
+                      const readBitIndex = opts.read_bit_index !== undefined ? opts.read_bit_index : -1;
+
+                      if (typeof rawReadVal === 'boolean') {
+                        isBitActive = rawReadVal;
+                      } else if (typeof rawReadVal === 'number') {
+                        if (isReadWord && readBitIndex >= 0) {
+                          isBitActive = ((parseInt(rawReadVal) || 0) & (1 << readBitIndex)) !== 0;
+                        } else {
+                          isBitActive = rawReadVal > 0;
+                        }
+                      } else {
+                        isBitActive = Boolean(rawReadVal);
+                      }
+                    }
+                  }
+                }
+
                 return (
                   <div key={'var-' + v.id.toString()} className="card" style={{ width: '100%', height: (['graph', 'timeseries', 'comparative_analysis', 'scatter'].includes(v.widget_type)) ? '280px' : undefined, minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
                     <div className="card-header" style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1478,6 +1502,30 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
             if (typeof val === 'number' && (mType === 'holding' || mType === 'holdingregister' || mType === 'input' || mType === 'inputregister') && opts.bit_index !== undefined && opts.bit_index >= 0) {
               const numVal = parseInt(val) || 0;
               isBitActive = (numVal & (1 << opts.bit_index)) !== 0;
+            }
+
+            if ((v.widget_type === 'bit_button' || v.widget_type === 'switch') && opts.same_read_var === false && opts.read_variable_id) {
+              const readVarObj = targetVarList.find(vObj => String(vObj.id) === String(opts.read_variable_id));
+              if (readVarObj && plcState) {
+                const rawReadVal = plcState[readVarObj.name] !== undefined ? plcState[readVarObj.name] : plcState[readVarObj.display_name];
+                if (rawReadVal !== undefined) {
+                  const rType = String(readVarObj.modbus_type || '').toLowerCase();
+                  const isReadWord = rType === 'holding' || rType === 'holdingregister' || rType === 'input' || rType === 'inputregister';
+                  const readBitIndex = opts.read_bit_index !== undefined ? opts.read_bit_index : -1;
+
+                  if (typeof rawReadVal === 'boolean') {
+                    isBitActive = rawReadVal;
+                  } else if (typeof rawReadVal === 'number') {
+                    if (isReadWord && readBitIndex >= 0) {
+                      isBitActive = ((parseInt(rawReadVal) || 0) & (1 << readBitIndex)) !== 0;
+                    } else {
+                      isBitActive = rawReadVal > 0;
+                    }
+                  } else {
+                    isBitActive = Boolean(rawReadVal);
+                  }
+                }
+              }
             }
 
             return (
