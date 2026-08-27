@@ -366,6 +366,11 @@ app.post('/api/modbus/write', async (req, res) => {
   }
 });
 
+// --- API Métricas Operacionais Modbus ---
+app.get('/api/modbus/metrics', (req, res) => {
+  res.json(plc.getMetricsSnapshot());
+});
+
 // --- APIs de Configurações do Sistema ---
 app.get('/api/settings/lighting', (req, res) => {
   db.get(`SELECT value FROM system_settings WHERE key = 'lighting_config'`, [], (err, row) => {
