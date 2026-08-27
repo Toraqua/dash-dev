@@ -348,6 +348,15 @@ class PLCService extends EventEmitter {
         }
       } catch (err) {
         metrics.recordBlockFailure();
+        
+        const isTimeout = err.message.includes('Timed out') || err.message.includes('Timeout');
+        const isCoalesced = err.message.includes('Coalesced') || err.message.includes('Deadline Expired');
+        
+        if (isTimeout || isCoalesced) {
+          logger.warn(`[Modbus Poll] Bloco ${typeKey}[${block.start}..${block.end - 1}] cancelado/atrasado: ${err.message}. (Ignorando divisão binária)`);
+          return;
+        }
+
         logger.warn(`[Modbus Poll] Bloco ${typeKey}[${block.start}..${block.end - 1}] falhou: ${err.message}. Iniciando divisão binária...`);
 
         // Fallback por Divisão Binária (32 -> 16 -> 8 -> 4 -> 2 -> 1)
