@@ -476,7 +476,7 @@ const CRLF = Buffer.from('\r\n');
 const BOUNDARY_PREFIX = Buffer.from('--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ');
 const HEADER_SUFFIX = Buffer.from('\r\n\r\n');
 
-// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients, chunks, chunkLen, lastFrameAt, watchdog } }
+// Mapa de processos FFmpeg ativos: { cameraId -> { proc, clients, chunks, chunkLen, lastFrameAt, watchdog, keepWarmTimer, lastFrameBuffer } }
 const activeStreams = {};
 
 function buildPacket(frame) {
@@ -562,17 +562,30 @@ function startFfmpeg(camId, camUrl, resolution = '360p') {
         if (client.writableLength > 128 * 1024) return;
         try { client.write(packet); } catch (_) {}
       });
+
+      // Cacheia o último frame JPEG para exibir enquanto novos clientes conectam
+      if (s) s.lastFrameBuffer = frame;
     }
   });
 
   proc.on('exit', (code) => {
     if (activeStreams[camId] && activeStreams[camId].clients.size > 0) {
       setTimeout(() => {
-        if (activeStreams[camId] && activeStreams[camId].clients.size > 0) startFfmpeg(camId, camUrl);
+        if (activeStreams[camId] && activeStreams[camId].clients.size > 0) startFfmpeg(camId, camUrl, resolution);
       }, 2000);
     } else if (activeStreams[camId]) {
+      // Não matar imediatamente — mantém o estado por 30s (keep-warm)
+      // Isso elimina o cold start caso o usuário reabra o stream logo em seguida
+      console.log(`[Camera ${camId}] Sem clientes. FFmpeg encerrado. Mantendo estado por 30s...`);
       clearInterval(activeStreams[camId].watchdog);
-      delete activeStreams[camId];
+      activeStreams[camId].proc = null;
+      if (activeStreams[camId].keepWarmTimer) clearTimeout(activeStreams[camId].keepWarmTimer);
+      activeStreams[camId].keepWarmTimer = setTimeout(() => {
+        if (activeStreams[camId] && activeStreams[camId].clients.size === 0) {
+          console.log(`[Camera ${camId}] Keep-warm expirado. Limpando estado.`);
+          delete activeStreams[camId];
+        }
+      }, 30000);
     }
   });
 
@@ -581,6 +594,53 @@ function startFfmpeg(camId, camUrl, resolution = '360p') {
     if (activeStreams[camId]) { clearInterval(activeStreams[camId].watchdog); delete activeStreams[camId]; }
   });
 }
+
+// Endpoint para pré-aquecimento do FFmpeg sem enviar stream: GET /api/cameras/:id/warmup
+app.get('/api/cameras/:id/warmup', (req, res) => {
+  const camId = parseInt(req.params.id);
+  db.get('SELECT * FROM cameras WHERE id = ?', [camId], (err, cam) => {
+    if (err || !cam || !cam.url || !cam.url.startsWith('rtsp')) return res.json({ warming: false });
+    if (!activeStreams[camId]) {
+      console.log(`[Camera ${camId}] Warmup solicitado. Iniciando FFmpeg antecipadamente...`);
+      activeStreams[camId] = { proc: null, clients: new Set(), chunks: [], chunkLen: 0, lastFrameAt: Date.now(), watchdog: null, keepWarmTimer: null, lastFrameBuffer: null };
+      activeStreams[camId].watchdog = setInterval(() => {
+        const s = activeStreams[camId];
+        if (!s) return;
+        const age = Date.now() - s.lastFrameAt;
+        if (age > 20000 && s.clients.size > 0) {
+          console.log(`[Camera ${camId}] Watchdog: sem frames há ${(age/1000).toFixed(0)}s. Reiniciando.`);
+          try { s.proc && s.proc.kill('SIGTERM'); } catch (_) {}
+        }
+      }, 10000);
+      startFfmpeg(camId, cam.url, cam.resolution || '360p');
+    } else if (activeStreams[camId].keepWarmTimer) {
+      // Cancela o timer de limpeza se o usuário está voltando
+      clearTimeout(activeStreams[camId].keepWarmTimer);
+      activeStreams[camId].keepWarmTimer = null;
+      // Reinicia FFmpeg se estava encerrado
+      if (!activeStreams[camId].proc) {
+        console.log(`[Camera ${camId}] Reaquecendo FFmpeg após keep-warm...`);
+        startFfmpeg(camId, cam.url, cam.resolution || '360p');
+      }
+    }
+    res.json({ warming: true });
+  });
+});
+
+// Último frame em cache: GET /api/cameras/:id/lastframe
+app.get('/api/cameras/:id/lastframe', (req, res) => {
+  const camId = parseInt(req.params.id);
+  const s = activeStreams[camId];
+  if (!s || !s.lastFrameBuffer) {
+    return res.status(404).json({ error: 'Sem frame em cache' });
+  }
+  res.writeHead(200, {
+    'Content-Type': 'image/jpeg',
+    'Content-Length': s.lastFrameBuffer.length,
+    'Cache-Control': 'no-cache'
+  });
+  res.end(s.lastFrameBuffer);
+});
 
 // Stream MJPEG ao vivo: GET /api/cameras/:id/stream
 app.get('/api/cameras/:id/stream', (req, res) => {
@@ -604,7 +664,7 @@ app.get('/api/cameras/:id/stream', (req, res) => {
 
     if (!activeStreams[camId]) {
       console.log(`[Camera ${camId}] Iniciando FFmpeg para: ${cam.url.replace(/:([^@]+)@/, ':***@')}`);
-      activeStreams[camId] = { proc: null, clients: new Set(), chunks: [], chunkLen: 0, lastFrameAt: Date.now(), watchdog: null };
+      activeStreams[camId] = { proc: null, clients: new Set(), chunks: [], chunkLen: 0, lastFrameAt: Date.now(), watchdog: null, keepWarmTimer: null, lastFrameBuffer: null };
 
       // Watchdog: reinicia FFmpeg se ficou 20s sem frames
       activeStreams[camId].watchdog = setInterval(() => {
@@ -618,6 +678,16 @@ app.get('/api/cameras/:id/stream', (req, res) => {
       }, 10000);
 
       startFfmpeg(camId, cam.url, cam.resolution || '360p');
+    } else {
+      // Se estava no keep-warm, cancela o timer de limpeza e reinicia FFmpeg se necessário
+      if (activeStreams[camId].keepWarmTimer) {
+        clearTimeout(activeStreams[camId].keepWarmTimer);
+        activeStreams[camId].keepWarmTimer = null;
+      }
+      if (!activeStreams[camId].proc) {
+        console.log(`[Camera ${camId}] Retomando stream após keep-warm.`);
+        startFfmpeg(camId, cam.url, cam.resolution || '360p');
+      }
     }
 
     activeStreams[camId].clients.add(res);
@@ -628,10 +698,17 @@ app.get('/api/cameras/:id/stream', (req, res) => {
         activeStreams[camId].clients.delete(res);
         console.log(`[Camera ${camId}] Cliente desconectado (restantes: ${activeStreams[camId].clients.size})`);
         if (activeStreams[camId].clients.size === 0) {
-          console.log(`[Camera ${camId}] Nenhum cliente. Encerrando FFmpeg.`);
-          try { activeStreams[camId].proc.kill('SIGTERM'); } catch (_) {}
-          clearInterval(activeStreams[camId].watchdog);
-          delete activeStreams[camId];
+          // Não mata FFmpeg imediatamente — mantém keep-warm por 30s
+          console.log(`[Camera ${camId}] Nenhum cliente. Iniciando keep-warm de 30s antes de encerrar FFmpeg.`);
+          if (activeStreams[camId].keepWarmTimer) clearTimeout(activeStreams[camId].keepWarmTimer);
+          activeStreams[camId].keepWarmTimer = setTimeout(() => {
+            if (activeStreams[camId] && activeStreams[camId].clients.size === 0) {
+              console.log(`[Camera ${camId}] Keep-warm expirado. Encerrando FFmpeg.`);
+              try { activeStreams[camId].proc && activeStreams[camId].proc.kill('SIGTERM'); } catch (_) {}
+              clearInterval(activeStreams[camId].watchdog);
+              delete activeStreams[camId];
+            }
+          }, 30000);
         }
       }
     });

@@ -437,12 +437,18 @@ const TimeAgo = React.memo(function TimeAgo({ lastMs }) {
 
 // =============================================================================
 // DashboardCameraCard — Exibe a câmera de supervisão com botão Play para evitar
-// overload no servidor com FFmpeg simultâneo
+// overload no servidor com FFmpeg simultâneo.
+// Melhorias de UX: pré-aquecimento no hover, último frame em cache enquanto carrega,
+// spinner de loading e sem tela preta no início.
 // =============================================================================
 function DashboardCameraCard({ c, getBaseUrl }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isTabVisible, setIsTabVisible] = useState(true);
+  const [isStreamReady, setIsStreamReady] = useState(false);
+  const [lastFrameUrl, setLastFrameUrl] = useState(null);
+  const [isWarming, setIsWarming] = useState(false);
   const cardRef = useRef(null);
+  const warmupTimerRef = useRef(null);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -451,6 +457,13 @@ function DashboardCameraCard({ c, getBaseUrl }) {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
+
+  // Reseta estado quando para de reproduzir
+  useEffect(() => {
+    if (!isPlaying) {
+      setIsStreamReady(false);
+    }
+  }, [isPlaying]);
 
   const handleFullscreen = () => {
     if (cardRef.current) {
@@ -462,8 +475,45 @@ function DashboardCameraCard({ c, getBaseUrl }) {
     }
   };
 
+  // Ao passar o mouse: pré-aquece o FFmpeg e busca último frame em cache
+  const handleMouseEnter = () => {
+    if (!c.url || !c.url.startsWith('rtsp')) return;
+    if (isPlaying || isWarming) return;
+    setIsWarming(true);
+    // Busca o último frame cacheado para mostrar como preview
+    fetch(getBaseUrl() + `/api/cameras/${c.id}/lastframe`)
+      .then(r => r.ok ? r.blob() : null)
+      .then(blob => { if (blob) setLastFrameUrl(URL.createObjectURL(blob)); })
+      .catch(() => {});
+    // Dispara warmup do FFmpeg com um pequeno delay (evita warmup acidental)
+    warmupTimerRef.current = setTimeout(() => {
+      fetch(getBaseUrl() + `/api/cameras/${c.id}/warmup`).catch(() => {});
+    }, 600);
+  };
+
+  const handleMouseLeave = () => {
+    if (warmupTimerRef.current) {
+      clearTimeout(warmupTimerRef.current);
+      warmupTimerRef.current = null;
+    }
+    setIsWarming(false);
+  };
+
+  const handlePlay = () => {
+    setIsStreamReady(false);
+    setIsPlaying(true);
+    // Aciona warmup imediatamente ao clicar
+    fetch(getBaseUrl() + `/api/cameras/${c.id}/warmup`).catch(() => {});
+  };
+
   return (
-    <div ref={cardRef} className="camera-dash-card" style={{ width: '100%', height: '100%', position: 'relative', background: '#020508', overflow: 'hidden', borderRadius: '12px' }}>
+    <div
+      ref={cardRef}
+      className="camera-dash-card"
+      style={{ width: '100%', height: '100%', position: 'relative', background: '#020508', overflow: 'hidden', borderRadius: '12px' }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {/* Header flutuante - aparece ao passar o mouse via CSS */}
       <div className="camera-dash-header" style={{
         position: 'absolute', top: 0, left: 0, right: 0,
@@ -488,10 +538,39 @@ function DashboardCameraCard({ c, getBaseUrl }) {
         {c.url && c.url.startsWith('rtsp') ? (
           (isPlaying && isTabVisible) ? (
             <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+              {/* Último frame em cache como placeholder enquanto o stream carrega */}
+              {!isStreamReady && lastFrameUrl && (
+                <img
+                  src={lastFrameUrl}
+                  alt="preview"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', zIndex: 1, filter: 'blur(1px)', opacity: 0.6 }}
+                />
+              )}
+              {/* Spinner de loading enquanto stream não está pronto */}
+              {!isStreamReady && (
+                <div style={{
+                  position: 'absolute', inset: 0, zIndex: 2,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  background: lastFrameUrl ? 'rgba(0,0,0,0.45)' : 'linear-gradient(135deg, rgba(15,23,42,0.95) 0%, rgba(2,5,8,0.98) 100%)',
+                }}>
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                    {[0, 1, 2].map(i => (
+                      <div key={i} style={{
+                        width: '8px', height: '8px', borderRadius: '50%',
+                        background: 'rgba(59,130,246,0.9)',
+                        animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+                      }} />
+                    ))}
+                  </div>
+                  <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.78rem' }}>Iniciando câmera...</span>
+                  <style>{`@keyframes pulse { 0%,80%,100%{transform:scale(0.6);opacity:0.4} 40%{transform:scale(1);opacity:1} }`}</style>
+                </div>
+              )}
               <img
                 src={getBaseUrl() + `/api/cameras/${c.id}/stream`}
                 alt={c.name}
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                onLoad={() => setIsStreamReady(true)}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isStreamReady ? 1 : 0, transition: 'opacity 0.4s ease' }}
               />
               {/* Botão de pausa flutuante - aparece no hover */}
               <div className="camera-pause-hint" style={{
@@ -506,36 +585,46 @@ function DashboardCameraCard({ c, getBaseUrl }) {
             </div>
           ) : (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(2,5,8,0.95) 100%)' }}>
-              <div style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>
-                Câmera Pausada
+              {/* Preview do último frame ao fazer hover */}
+              {lastFrameUrl && (
+                <img
+                  src={lastFrameUrl}
+                  alt="preview"
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: isWarming ? 0.35 : 0, transition: 'opacity 0.3s ease', filter: 'blur(2px)' }}
+                />
+              )}
+              <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>
+                  Câmera Pausada
+                </div>
+                <button
+                  className="btn"
+                  onClick={handlePlay}
+                  style={{
+                    width: '72px', height: '72px', borderRadius: '50%',
+                    background: 'rgba(59, 130, 246, 0.2)',
+                    border: '2px solid rgba(59, 130, 246, 0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    backdropFilter: 'blur(8px)', zIndex: 5,
+                    boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.background = 'var(--color-primary)';
+                    e.currentTarget.style.borderColor = 'var(--color-primary)';
+                    e.currentTarget.style.transform = 'scale(1.1)';
+                    e.currentTarget.style.boxShadow = '0 0 30px rgba(59, 130, 246, 0.4)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
+                    e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
+                    e.currentTarget.style.transform = 'scale(1)';
+                    e.currentTarget.style.boxShadow = '0 0 20px rgba(59, 130, 246, 0.15)';
+                  }}
+                >
+                  <Play size={34} color="#fff" style={{ marginLeft: '4px' }} fill="#fff" />
+                </button>
               </div>
-              <button
-                className="btn"
-                onClick={() => setIsPlaying(true)}
-                style={{
-                  width: '72px', height: '72px', borderRadius: '50%',
-                  background: 'rgba(59, 130, 246, 0.2)',
-                  border: '2px solid rgba(59, 130, 246, 0.5)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                  backdropFilter: 'blur(8px)', zIndex: 5,
-                  boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.background = 'var(--color-primary)';
-                  e.currentTarget.style.borderColor = 'var(--color-primary)';
-                  e.currentTarget.style.transform = 'scale(1.1)';
-                  e.currentTarget.style.boxShadow = '0 0 30px rgba(59, 130, 246, 0.4)';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
-                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
-                  e.currentTarget.style.transform = 'scale(1)';
-                  e.currentTarget.style.boxShadow = '0 0 20px rgba(59, 130, 246, 0.15)';
-                }}
-              >
-                <Play size={34} color="#fff" style={{ marginLeft: '4px' }} fill="#fff" />
-              </button>
             </div>
           )
         ) : (
