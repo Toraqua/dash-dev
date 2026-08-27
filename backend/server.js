@@ -14,12 +14,63 @@ process.on('uncaughtException', (err) => {
   console.error('[System] Uncaught Exception capturada (processo mantido rodando):', err?.message || err);
 });
 
-const db = require('./db');
-const plc = require('./plc');
-const gatewayService = require('./gateway');
+const { Worker } = require('worker_threads');
 
-const path = require('path');
-const fs = require('fs');
+// Cache local para a API não travar o event loop principal
+const plcStateCache = {
+  state: {},
+  lastReadTimes: {},
+  devices: {}
+};
+
+// -----------------------------------------------------------------------------
+// INICIALIZAÇÃO DE WORKER THREADS (Paralelismo)
+// -----------------------------------------------------------------------------
+const plcWorker = new Worker(path.resolve(__dirname, 'plc_worker.js'));
+const gatewayWorker = new Worker(path.resolve(__dirname, 'gateway_worker.js'));
+
+let _messageIdCounter = 0;
+const writePromises = new Map();
+
+// Função que envelopa a escrita Modbus em uma Promise via IPC
+const writeModbusAsync = (deviceId, modbus_type, address, value, decimals, bit_index, var_name) => {
+  return new Promise((resolve, reject) => {
+    const messageId = ++_messageIdCounter;
+    writePromises.set(messageId, { resolve, reject });
+    plcWorker.postMessage({
+      type: 'writeModbus',
+      payload: { messageId, deviceId, modbus_type, address, value, decimals, bit_index, var_name }
+    });
+    
+    // Timeout de segurança caso a thread fique travada
+    setTimeout(() => {
+      if (writePromises.has(messageId)) {
+        writePromises.get(messageId).reject(new Error('Modbus write timeout via IPC'));
+        writePromises.delete(messageId);
+      }
+    }, 20000);
+  });
+};
+
+// Lida com mensagens vindas do motor Modbus
+plcWorker.on('message', (msg) => {
+  if (msg.type === 'update') {
+    plcStateCache.state = msg.data.state;
+    plcStateCache.lastReadTimes = msg.data.lastReadTimes;
+    handleTelemetry(msg.data);
+  } else if (msg.type === 'alarms_updated') {
+    io.emit('alarms_updated');
+  } else if (msg.type === 'devices_status') {
+    plcStateCache.devices = msg.devices;
+  } else if (msg.type.endsWith('_response')) {
+    const p = writePromises.get(msg.messageId);
+    if (p) {
+      if (msg.success) p.resolve(msg.result);
+      else p.reject(new Error(msg.error));
+      writePromises.delete(msg.messageId);
+    }
+  }
+});
 
 const app = express();
 app.use(cors());
@@ -32,68 +83,51 @@ app.use(express.static(distPath));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
-  // Compressão reduz tráfego de rede — crucial para RPi3 com vários clientes
   perMessageDeflate: {
     threshold: 512,
     zlibDeflateOptions: { chunkSize: 1024, memLevel: 3, level: 1 },
     clientNoContextTakeover: true,
     serverNoContextTakeover: true,
   },
-  // Pings mais lentos para não sobrecarregar o RPi3 com keep-alives
   pingInterval: 30000,
   pingTimeout: 15000,
-  // Limita tamanho de mensagem para evitar estouro de buffer
   maxHttpBufferSize: 1e5,
-  // Força polling longo primeiro, depois upgrade para WS (mais estável em RPi)
   transports: ['websocket', 'polling'],
 });
 
 // WebSocket para Atualizações em Tempo Real
 io.on('connection', (socket) => {
-  // Envia estado inicial ao novo cliente
-  socket.emit('update', { state: plc.state, lastReadTimes: plc.lastReadTimes });
-
-  socket.on('disconnect', () => {
-    // Silencioso em produção para não lotar o journalctl
-  });
+  // Envia estado em cache ao novo cliente imediatamente
+  socket.emit('update', { state: plcStateCache.state, lastReadTimes: plcStateCache.lastReadTimes });
 });
 
 // Throttle de telemetria: no máximo 1 emissão/segundo para não saturar o RPi3
-// com múltiplos clientes conectados. Usa volatile para descartar se a fila estiver cheia.
 let _lastTelemetryEmit = 0;
 let _pendingTelemetry = null;
 let _telemetryTimer = null;
 
-plc.on('update', (data) => {
+function handleTelemetry(data) {
   _pendingTelemetry = data;
   const now = Date.now();
   const elapsed = now - _lastTelemetryEmit;
   if (elapsed >= 1000) {
-    // Pode emitir agora
     _lastTelemetryEmit = now;
     io.volatile.emit('update', data);
     _pendingTelemetry = null;
     if (_telemetryTimer) { clearTimeout(_telemetryTimer); _telemetryTimer = null; }
   } else if (!_telemetryTimer) {
-    // Agenda próxima emissão para completar o intervalo de 1s
     _telemetryTimer = setTimeout(() => {
       _telemetryTimer = null;
       if (_pendingTelemetry) {
         _lastTelemetryEmit = Date.now();
         io.volatile.emit('update', _pendingTelemetry);
         _pendingTelemetry = null;
-        // Repassa ao gateway com o último estado disponível
-        gatewayService.publishTelemetry(_pendingTelemetry?.state || _pendingTelemetry || {});
+        gatewayWorker.postMessage({ type: 'publishTelemetry', data: _pendingTelemetry?.state || _pendingTelemetry || {} });
       }
     }, 1000 - elapsed);
   }
-  // Sempre repassa ao gateway
-  gatewayService.publishTelemetry(data.state || data);
-});
-
-plc.on('alarms_updated', () => {
-  io.emit('alarms_updated');
-});
+  gatewayWorker.postMessage({ type: 'publishTelemetry', data: data.state || data });
+}
 
 const logAudit = (user, action, paramName, oldValue, newValue, status = 'SUCESSO') => {
   db.run(
@@ -214,14 +248,13 @@ app.get('/api/devices', (req, res) => {
   db.all('SELECT * FROM devices', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     const result = rows.map(r => {
-      const channel = plc.channels ? plc.channels[r.id] : null;
+      const devCache = plcStateCache.devices && plcStateCache.devices[r.id];
       let liveStatus = 'Offline';
-      if (channel) {
-        if (channel.state === 'ONLINE') liveStatus = 'Online';
-        else if (channel.state === 'CONNECTING') liveStatus = 'Conectando';
-        else if (channel.state === 'BACKOFF' || channel.state === 'RECOVERING') liveStatus = 'Reconectando';
-      } else if (plc.devices && plc.devices[r.id]) {
-        liveStatus = plc.devices[r.id].connected ? 'Online' : 'Offline';
+      if (devCache) {
+        if (devCache.state === 'ONLINE') liveStatus = 'Online';
+        else if (devCache.state === 'CONNECTING') liveStatus = 'Conectando';
+        else if (devCache.state === 'BACKOFF' || devCache.state === 'RECOVERING') liveStatus = 'Reconectando';
+        else liveStatus = devCache.connected ? 'Online' : 'Offline';
       }
       return {
         ...r,
@@ -237,7 +270,7 @@ app.post('/api/devices', (req, res) => {
   db.run(`INSERT INTO devices (name, ip_address, port, polling_interval_ms) VALUES (?, ?, ?, ?)`, 
     [name, ip_address, port || 502, polling_interval_ms || 1000], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plc.reloadDevices();
+      plcWorker.postMessage({ type: 'reloadDevices' });
       res.json({ id: this.lastID, success: true });
   });
 });
@@ -245,7 +278,7 @@ app.post('/api/devices', (req, res) => {
 app.delete('/api/devices/:id', (req, res) => {
   db.run('DELETE FROM devices WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    plc.reloadDevices();
+    plcWorker.postMessage({ type: 'reloadDevices' });
     res.json({ success: true });
   });
 });
@@ -257,7 +290,7 @@ app.put('/api/devices/:id', (req, res) => {
     [name, ip_address, port, polling_interval_ms, req.params.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plc.reloadDevices();
+      plcWorker.postMessage({ type: 'reloadDevices' });
       res.json({ success: true });
     }
   );
@@ -279,7 +312,7 @@ app.post('/api/variables', (req, res) => {
     [device_id, name, display_name, type, unit || '', modbus_address, modbus_type, decimals || 0, widget_type || 'value', JSON.stringify(grid_layout || {}), color || '#3b82f6', category || 'supervision', JSON.stringify(options || {})], 
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plc.reloadVariables();
+      plcWorker.postMessage({ type: 'reloadVariables' });
       notifyVariablesUpdated();
       res.json({ id: this.lastID, success: true });
   });
@@ -297,7 +330,7 @@ app.put('/api/variables/:id', (req, res) => {
   } else if (category !== undefined && Object.keys(req.body).length === 1) {
     db.run(`UPDATE variables SET category = ? WHERE id = ?`, [category, req.params.id], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plc.reloadVariables();
+      plcWorker.postMessage({ type: 'reloadVariables' });
       notifyVariablesUpdated();
       res.json({ success: true });
     });
@@ -306,7 +339,7 @@ app.put('/api/variables/:id', (req, res) => {
       [device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, color, category, options ? (typeof options === 'string' ? options : JSON.stringify(options)) : null, grid_layout ? (typeof grid_layout === 'string' ? grid_layout : JSON.stringify(grid_layout)) : null, req.params.id], 
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        plc.reloadVariables();
+        plcWorker.postMessage({ type: 'reloadVariables' });
         notifyVariablesUpdated();
         res.json({ success: true });
     });
@@ -316,7 +349,7 @@ app.put('/api/variables/:id', (req, res) => {
 app.delete('/api/variables/:id', (req, res) => {
   db.run('DELETE FROM variables WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    plc.reloadVariables();
+    plcWorker.postMessage({ type: 'reloadVariables' });
     notifyVariablesUpdated();
     res.json({ success: true });
   });
@@ -367,7 +400,7 @@ app.get('/api/history/:variableId', (req, res) => {
 app.post('/api/modbus/write', async (req, res) => {
   const { device_id, modbus_type, address, value, decimals, bit_index, var_name, username } = req.body;
   try {
-    await plc.writeModbus(device_id, modbus_type, address, value, decimals, bit_index, var_name);
+    await writeModbusAsync(device_id, modbus_type, address, value, decimals, bit_index, var_name);
     logAudit(username || 'Operador', 'ESCRITA_MODBUS', `Dispositivo ${device_id} [${modbus_type} #${address}]`, '', value, 'SUCESSO');
     res.json({ success: true });
   } catch(e) {
@@ -377,8 +410,23 @@ app.post('/api/modbus/write', async (req, res) => {
 });
 
 // --- API Métricas Operacionais Modbus ---
-app.get('/api/modbus/metrics', (req, res) => {
-  res.json(plc.getMetricsSnapshot());
+app.get('/api/modbus/metrics', async (req, res) => {
+  try {
+    const metrics = await new Promise((resolve, reject) => {
+      const messageId = ++_messageIdCounter;
+      writePromises.set(messageId, { resolve, reject });
+      plcWorker.postMessage({ type: 'getMetrics', messageId });
+      setTimeout(() => {
+        if (writePromises.has(messageId)) {
+          writePromises.get(messageId).reject(new Error('Timeout'));
+          writePromises.delete(messageId);
+        }
+      }, 5000);
+    });
+    res.json(metrics);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // --- APIs de Configurações do Sistema ---
@@ -420,7 +468,7 @@ app.post('/api/settings/general', (req, res) => {
   const config = req.body;
   db.run(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('general_config', ?)`, [JSON.stringify(config)], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    if (plc && plc.loadGeneralConfig) plc.loadGeneralConfig();
+    plcWorker.postMessage({ type: 'loadGeneralConfig' });
     io.emit('general_config_updated', config);
     res.json({ success: true });
   });
@@ -773,7 +821,7 @@ app.post('/api/alarm_configs', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ id: this.lastID, success: true });
     // Notify PLC service to reload configs
-    if (plc && plc.loadAlarmConfigs) plc.loadAlarmConfigs();
+    plcWorker.postMessage({ type: 'loadAlarmConfigs' });
   });
 });
 
@@ -783,7 +831,7 @@ app.put('/api/alarm_configs/:id', (req, res) => {
   db.run(sql, [parseInt(device_id) || 1, name, description, modbus_address, modbus_type, condition_type, condition_value, severity, action_measures, enabled, req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
-    if (plc && plc.loadAlarmConfigs) plc.loadAlarmConfigs();
+    plcWorker.postMessage({ type: 'loadAlarmConfigs' });
   });
 });
 
@@ -791,7 +839,7 @@ app.delete('/api/alarm_configs/:id', (req, res) => {
   db.run('DELETE FROM alarm_configs WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
-    if (plc && plc.loadAlarmConfigs) plc.loadAlarmConfigs();
+    plcWorker.postMessage({ type: 'loadAlarmConfigs' });
   });
 });
 
@@ -996,9 +1044,9 @@ app.post('/api/config/import', async (req, res) => {
 
     db.run('COMMIT', (err) => {
       if (err) return res.status(500).json({ error: err.message });
-      if (plc && plc.reloadDevices) plc.reloadDevices();
-      if (plc && plc.loadAlarmConfigs) plc.loadAlarmConfigs();
-      if (plc && plc.loadGeneralConfig) plc.loadGeneralConfig();
+      plcWorker.postMessage({ type: 'reloadDevices' });
+      plcWorker.postMessage({ type: 'loadAlarmConfigs' });
+      plcWorker.postMessage({ type: 'loadGeneralConfig' });
 
       logAudit('Admin', 'CONFIG_IMPORT', 'Restauração de Backup', '', 'Configuração restaurada', 'SUCESSO');
 
