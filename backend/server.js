@@ -776,9 +776,9 @@ function startFfmpeg(camId, camUrl, resolution = '360p') {
         if (activeStreams[camId] && activeStreams[camId].clients.size > 0) startFfmpeg(camId, camUrl, resolution);
       }, 2000);
     } else if (activeStreams[camId]) {
-      // Não matar imediatamente — mantém o estado por 30s (keep-warm)
+      // Não matar imediatamente — mantém o estado por 120s (keep-warm)
       // Isso elimina o cold start caso o usuário reabra o stream logo em seguida
-      console.log(`[Camera ${camId}] Sem clientes. FFmpeg encerrado. Mantendo estado por 30s...`);
+      console.log(`[Camera ${camId}] Sem clientes. FFmpeg encerrado. Mantendo estado por 120s...`);
       clearInterval(activeStreams[camId].watchdog);
       activeStreams[camId].proc = null;
       if (activeStreams[camId].keepWarmTimer) clearTimeout(activeStreams[camId].keepWarmTimer);
@@ -787,7 +787,7 @@ function startFfmpeg(camId, camUrl, resolution = '360p') {
           console.log(`[Camera ${camId}] Keep-warm expirado. Limpando estado.`);
           delete activeStreams[camId];
         }
-      }, 30000);
+      }, 120000);
     }
   });
 
@@ -900,8 +900,8 @@ app.get('/api/cameras/:id/stream', (req, res) => {
         activeStreams[camId].clients.delete(res);
         console.log(`[Camera ${camId}] Cliente desconectado (restantes: ${activeStreams[camId].clients.size})`);
         if (activeStreams[camId].clients.size === 0) {
-          // Não mata FFmpeg imediatamente — mantém keep-warm por 30s
-          console.log(`[Camera ${camId}] Nenhum cliente. Iniciando keep-warm de 30s antes de encerrar FFmpeg.`);
+          // Não mata FFmpeg imediatamente — mantém keep-warm por 120s
+          console.log(`[Camera ${camId}] Nenhum cliente. Iniciando keep-warm de 120s antes de encerrar FFmpeg.`);
           if (activeStreams[camId].keepWarmTimer) clearTimeout(activeStreams[camId].keepWarmTimer);
           activeStreams[camId].keepWarmTimer = setTimeout(() => {
             if (activeStreams[camId] && activeStreams[camId].clients.size === 0) {
@@ -910,7 +910,7 @@ app.get('/api/cameras/:id/stream', (req, res) => {
               clearInterval(activeStreams[camId].watchdog);
               delete activeStreams[camId];
             }
-          }, 30000);
+          }, 120000);
         }
       }
     });
