@@ -15,6 +15,9 @@ process.on('uncaughtException', (err) => {
 });
 
 const { Worker } = require('worker_threads');
+const path = require('path');
+const fs = require('fs');
+const db = require('./db');
 
 // Cache local para a API não travar o event loop principal
 const plcStateCache = {
