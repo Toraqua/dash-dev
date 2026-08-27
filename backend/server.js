@@ -572,9 +572,11 @@ function startFfmpeg(camId, camUrl, resolution = '360p') {
 
   proc.stdout.on('data', (chunk) => {
     const s = activeStreams[camId];
-    if (!s || !s.clients.size) return; // Descarta se não há clientes
+    if (!s) return;
     s.lastFrameAt = Date.now();
 
+    // Se não há clientes mas há keep-warm ativo, ainda acumula para cachear o último frame
+    const hasClients = s.clients.size > 0;
     s.chunks.push(chunk);
     s.chunkLen += chunk.length;
 
@@ -606,15 +608,17 @@ function startFfmpeg(camId, camUrl, resolution = '360p') {
 
       const packet = buildPacket(frame);
 
-      // Backpressure: descarta frame para clientes com buffer HTTP cheio (> 128KB)
-      // Isso protege a RAM do RPi3 quando abas em background não consomem dados
-      s.clients.forEach(client => {
-        if (client.destroyed || client.writableEnded) return;
-        if (client.writableLength > 128 * 1024) return;
-        try { client.write(packet); } catch (_) {}
-      });
+      // Só envia para clientes se houver algum conectado
+      if (hasClients) {
+        // Backpressure: descarta frame para clientes com buffer HTTP cheio (> 128KB)
+        s.clients.forEach(client => {
+          if (client.destroyed || client.writableEnded) return;
+          if (client.writableLength > 128 * 1024) return;
+          try { client.write(packet); } catch (_) {}
+        });
+      }
 
-      // Cacheia o último frame JPEG para exibir enquanto novos clientes conectam
+      // Cacheia o último frame JPEG sempre — mesmo durante warmup sem clientes
       if (s) s.lastFrameBuffer = frame;
     }
   });
