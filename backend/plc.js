@@ -335,7 +335,7 @@ class PLCService extends EventEmitter {
       try {
         const data = await channel.request({
           priority: 3, // P3: Telemetria Normal
-          deadline: Date.now() + 6000,
+          deadline: Date.now() + 15000,
           key,
           execute: async (client) => {
             const res = await client[readFnName](block.start, count);
@@ -357,7 +357,7 @@ class PLCService extends EventEmitter {
           try {
             const subData = await channel.request({
               priority: 3,
-              deadline: Date.now() + 4000,
+              deadline: Date.now() + 15000,
               key: `poll:${typeKey}:${subBlock.start}:${subCount}`,
               execute: async (client) => {
                 const res = await client[readFnName](subBlock.start, subCount);
@@ -556,7 +556,7 @@ class PLCService extends EventEmitter {
     // Dispara requisição com Prioridade P1 na Fila
     return channel.request({
       priority: 1, // P1: Comando de Operador
-      deadline: Date.now() + 5000,
+      deadline: Date.now() + 15000,
       key: `write:${mType}:${wireAddr}`,
       execute: async (client) => {
         if (mType === 'coil') {

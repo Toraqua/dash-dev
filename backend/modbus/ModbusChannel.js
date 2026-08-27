@@ -87,8 +87,8 @@ class ModbusChannel {
     logger.info(`[Modbus Channel] Tentando conectar ID ${this.deviceId} (${this.ip}:${this.port}) [Gen ${currentGen}]...`, { deviceId: this.deviceId, gen: currentGen });
 
     const client = new ModbusRTU();
-    // Timeout adaptativo por frame (mín. 500ms, máx. 2000ms)
-    const frameTimeout = Math.min(Math.max(500, Math.round(metrics.getP95RTT() * 1.5 + 200)), 2000);
+    // Timeout adaptativo por frame (mín. 3000ms, máx. 8000ms) - 500ms era agressivo demais para Wi-Fi/RPi3
+    const frameTimeout = Math.min(Math.max(3000, Math.round(metrics.getP95RTT() * 2.0 + 1000)), 8000);
     client.setTimeout(frameTimeout);
 
     // Evento de erro de socket
@@ -101,10 +101,10 @@ class ModbusChannel {
     this.client = client;
 
     try {
-      // Connect com Hard Timeout de 4s
+      // Connect com Hard Timeout de 8s (para conexões lentas no RPi3)
       const connectPromise = client.connectTCP(this.ip, { port: this.port });
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('TCP Handshake Timeout (4s)')), 4000)
+        setTimeout(() => reject(new Error('TCP Handshake Timeout (8s)')), 8000)
       );
 
       await Promise.race([connectPromise, timeoutPromise]);
@@ -225,12 +225,12 @@ class ModbusChannel {
     const currentGen = this.generationId;
     const startMs = Date.now();
 
-    // Timeout adaptativo dinâmico por transação (min 500ms, max 2000ms)
-    const adaptiveTimeoutMs = Math.min(Math.max(500, Math.round(metrics.getP95RTT() * 1.5 + 200)), 2000);
+    // Timeout adaptativo dinâmico por transação (min 3000ms, max 8000ms)
+    const adaptiveTimeoutMs = Math.min(Math.max(3000, Math.round(metrics.getP95RTT() * 2.0 + 1000)), 8000);
 
     const executePromise = req.execute(this.client);
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Modbus Request Timeout (${adaptiveTimeoutMs}ms)`)), adaptiveTimeoutMs)
+      setTimeout(() => reject(new Error(`Timed out`)), adaptiveTimeoutMs)
     );
 
     try {
