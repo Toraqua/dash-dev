@@ -7,7 +7,7 @@ const circuitBreaker = require('./ModbusCircuitBreaker');
 
 class ModbusScheduler {
   constructor() {
-    this.maxGap = 3;      // Tolerância máxima a lacunas não mapeadas (palavras)
+    this.maxGap = 0;      // Sem tolerância a lacunas — agrupa APENAS registradores contíguos
     this.maxBlock = 60;   // Tamanho máximo de registradores por bloco TCP FC03/FC04
   }
 
