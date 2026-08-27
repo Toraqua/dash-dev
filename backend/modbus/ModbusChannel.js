@@ -1,6 +1,12 @@
 // =============================================================================
 // ModbusChannel.js — Proprietário Único do Socket TCP e Máquina de Estados (FSM)
-// Garante 1 Socket Único por Dispositivo, Generation ID e Backoff com Jitter
+// Garante 1 Socket Único por Dispositivo, Generation ID e Backoff com Jitter.
+//
+// POLÍTICA DE RECONEXÃO (Industrial):
+//   Um timeout ISOLADO NÃO derruba o socket. Apenas CONSECUTIVE_FAIL_THRESHOLD
+//   falhas consecutivas sem nenhuma leitura bem-sucedida no meio disparam
+//   a reconexão. Isso evita o loop de connect/disconnect causado por jitter
+//   momentâneo de rede ou CLP ocupado (ex: ciclo de scan longo).
 // =============================================================================
 
 const ModbusRTU = require('modbus-serial');
@@ -8,6 +14,10 @@ const ModbusPriorityQueue = require('./ModbusPriorityQueue');
 const logger = require('./ModbusLogger');
 const metrics = require('./ModbusMetrics');
 const circuitBreaker = require('./ModbusCircuitBreaker');
+
+// Número de falhas consecutivas antes de derrubar o socket e reconectar.
+// Um valor de 3 significa: 3 timeouts seguidos sem nenhum sucesso no meio.
+const CONSECUTIVE_FAIL_THRESHOLD = 3;
 
 class ModbusChannel {
   constructor(deviceInfo) {
@@ -33,6 +43,9 @@ class ModbusChannel {
     this.retryCount = 0;
     this.backoffTimer = null;
     this.executorLoopActive = false;
+
+    // Contador de falhas consecutivas (reseta a cada sucesso)
+    this.consecutiveFailures = 0;
 
     // Callbacks de atualização de dados e eventos
     this.onDataUpdate = null;
@@ -87,21 +100,22 @@ class ModbusChannel {
     logger.info(`[Modbus Channel] Tentando conectar ID ${this.deviceId} (${this.ip}:${this.port}) [Gen ${currentGen}]...`, { deviceId: this.deviceId, gen: currentGen });
 
     const client = new ModbusRTU();
-    // Timeout adaptativo por frame (mín. 3000ms, máx. 8000ms) - 500ms era agressivo demais para Wi-Fi/RPi3
+
+    // Timeout de frame: mín 3s, máx 8s — adaptativo ao P95 RTT medido
     const frameTimeout = Math.min(Math.max(3000, Math.round(metrics.getP95RTT() * 2.0 + 1000)), 8000);
     client.setTimeout(frameTimeout);
 
-    // Evento de erro de socket
+    // Evento de erro de socket (nível TCP): sempre reconecta
     client.on('error', (err) => {
-      if (currentGen !== this.generationId) return; // Ignora eventos de sockets antigos
+      if (currentGen !== this.generationId) return;
       logger.warn(`[Modbus Socket Error] ID ${this.deviceId} [Gen ${currentGen}]: ${err.message}`, { deviceId: this.deviceId });
-      this._handleConnectionFailure(`Socket error: ${err.message}`);
+      this._handleConnectionFailure(`Socket error: ${err.message}`, true);
     });
 
     this.client = client;
 
     try {
-      // Connect com Hard Timeout de 8s (para conexões lentas no RPi3)
+      // Handshake TCP com Hard Timeout de 8s
       const connectPromise = client.connectTCP(this.ip, { port: this.port });
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('TCP Handshake Timeout (8s)')), 8000)
@@ -110,13 +124,13 @@ class ModbusChannel {
       await Promise.race([connectPromise, timeoutPromise]);
 
       if (currentGen !== this.generationId || this.state !== 'CONNECTING') {
-        // Se a geração mudou enquanto o handshake ocorria, aborta este socket
         client.close(() => {});
         return;
       }
 
       client.setID(1);
       this.retryCount = 0;
+      this.consecutiveFailures = 0; // Conexão bem-sucedida: zera contador
       metrics.recordReconnect();
       this.setState('ONLINE', 'Handshake TCP concluído');
 
@@ -126,23 +140,43 @@ class ModbusChannel {
     } catch (e) {
       if (currentGen !== this.generationId) return;
       logger.warn(`[Modbus Channel] Falha ao conectar ID ${this.deviceId}: ${e.message}`, { deviceId: this.deviceId });
-      this._handleConnectionFailure(e.message);
+      this._handleConnectionFailure(e.message, true);
     }
   }
 
   // ---------------------------------------------------------------------------
   // Tratamento de Falhas com Exponential Backoff + Jitter
+  // forceReconnect=true: falha de transporte TCP, reconecta imediatamente
+  // forceReconnect=false: timeout de aplicação, aguarda threshold
   // ---------------------------------------------------------------------------
-  _handleConnectionFailure(reason) {
+  _handleConnectionFailure(reason, forceReconnect = false) {
     if (this.state === 'STOPPED' || this.state === 'BACKOFF') return;
 
+    this.consecutiveFailures++;
+
+    if (!forceReconnect && this.consecutiveFailures < CONSECUTIVE_FAIL_THRESHOLD) {
+      // Falha isolada — registra mas mantém o socket aberto e continua tentando
+      logger.warn(
+        `[Modbus] ID ${this.deviceId} — falha ${this.consecutiveFailures}/${CONSECUTIVE_FAIL_THRESHOLD}: "${reason}". Mantendo socket e continuando...`,
+        { deviceId: this.deviceId }
+      );
+      return;
+    }
+
+    // Threshold atingido ou erro TCP real — agora sim derruba e reconecta
+    logger.warn(
+      `[Modbus] ID ${this.deviceId} — ${forceReconnect ? 'Erro TCP' : `${this.consecutiveFailures} falhas consecutivas`}. Reiniciando socket...`,
+      { deviceId: this.deviceId }
+    );
+
+    this.consecutiveFailures = 0;
     this.setState('RECOVERING', reason);
     this._purgeSocket(reason);
 
     this.retryCount++;
     this.setState('BACKOFF');
 
-    // Intervalo de reconexão: 1s, 2s, 4s, 8s... até 30s + jitter aleatório (0-500ms)
+    // Exponential Backoff: 1s, 1.5s, 2.25s... até 30s + jitter (0-500ms)
     const baseDelay = Math.min(1000 * Math.pow(1.5, this.retryCount - 1), 30000);
     const jitter = Math.floor(Math.random() * 500);
     const delay = Math.round(baseDelay + jitter);
@@ -180,7 +214,7 @@ class ModbusChannel {
       this.queue.enqueue({
         id: options.id,
         priority: options.priority !== undefined ? options.priority : 3,
-        deadline: options.deadline || (Date.now() + 8000),
+        deadline: options.deadline || (Date.now() + 15000),
         key: options.key,
         generationId: this.generationId,
         execute: options.execute,
@@ -225,7 +259,7 @@ class ModbusChannel {
     const currentGen = this.generationId;
     const startMs = Date.now();
 
-    // Timeout adaptativo dinâmico por transação (min 3000ms, max 8000ms)
+    // Timeout adaptativo por transação (min 3s, max 8s)
     const adaptiveTimeoutMs = Math.min(Math.max(3000, Math.round(metrics.getP95RTT() * 2.0 + 1000)), 8000);
 
     const executePromise = req.execute(this.client);
@@ -237,11 +271,12 @@ class ModbusChannel {
       const result = await Promise.race([executePromise, timeoutPromise]);
       const durationMs = Date.now() - startMs;
 
-      // Se a geração mudou durante a execução, descarta a resposta
       if (currentGen !== this.generationId) {
-        logger.debug(`[Modbus Generation] Resposta de requisição descartada: Socket Gen ${req.generationId} vs Atual ${this.generationId}`);
+        // Resposta de socket antigo — descarta silenciosamente
         if (req.reject) req.reject(new Error('Stale Socket Generation'));
       } else {
+        // SUCESSO: zera contador de falhas consecutivas
+        this.consecutiveFailures = 0;
         metrics.recordRequest(true, durationMs);
         if (req.resolve) req.resolve(result);
       }
@@ -250,17 +285,17 @@ class ModbusChannel {
       const durationMs = Date.now() - startMs;
       metrics.recordRequest(false, durationMs, err.message);
 
-      // Trata erro de configuração (quarentena) vs falha de transporte
+      if (req.reject) req.reject(err);
+
+      // Erros de configuração (Illegal Address) → quarentena, sem reconexão
       if (circuitBreaker.isConfigurationError(err)) {
-        logger.warn(`[Modbus Error] Erro de configuração no pedido ${req.id}: ${err.message}`);
-        if (req.reject) req.reject(err);
+        logger.warn(`[Modbus Error] Erro de configuração na transação ${req.id}: ${err.message}`);
+        // Não conta como falha de transporte
       } else {
         logger.warn(`[Modbus Error] Falha na transação ${req.id}: ${err.message}`);
-        if (req.reject) req.reject(err);
-
-        // Falha grave de transporte/timeout reseta o socket para autocura
+        // Timeout ou erro de transporte: incrementa contador, só reconecta se threshold atingido
         if (currentGen === this.generationId) {
-          this._handleConnectionFailure(err.message);
+          this._handleConnectionFailure(err.message, false);
         }
       }
 
@@ -268,7 +303,7 @@ class ModbusChannel {
       this.inFlight = false;
       metrics.updateQueueStatus(this.queue.size(), 0);
 
-      // Processa a próxima requisição na fila com pequeno respiro (10ms)
+      // Continua processando fila (10ms de respiro entre transações)
       if (this.state === 'ONLINE') {
         setTimeout(() => this._processNextRequest(), 10);
       } else {
