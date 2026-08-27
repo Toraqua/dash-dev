@@ -18,6 +18,7 @@ const { Worker } = require('worker_threads');
 const path = require('path');
 const fs   = require('fs');
 const db   = require('./db');
+const gatewayService = require('./gateway');
 
 // Cache local para a API não bloquear o event loop principal
 const plcStateCache = {
@@ -29,7 +30,6 @@ const plcStateCache = {
 let _messageIdCounter = 0;
 const writePromises   = new Map();
 let plcWorker         = null;
-let gatewayWorker     = null;
 let _plcRestarts      = 0;
 
 // -----------------------------------------------------------------------------
@@ -56,9 +56,43 @@ function startPlcWorker() {
         plcStateCache.devices = msg.devices;
         break;
       case 'device_state_change':
-        // Atualização granular de um único dispositivo
         if (msg.devId) plcStateCache.devices[msg.devId] = msg.snap;
         break;
+
+      // Worker pronto: envia todos os dados iniciais do DB
+      case 'worker_ready':
+        loadPlcInitData().then(payload => {
+          if (plcWorker) plcWorker.postMessage({ type: 'init', payload });
+        }).catch(err => console.error('[Server] Erro ao carregar dados iniciais para PLC Worker:', err.message));
+        break;
+
+      // Worker solicita escrita de histórico (batch) — main thread faz o INSERT
+      case 'db_write_history':
+        if (Array.isArray(msg.rows) && msg.rows.length > 0) {
+          db.runBatchAsync(msg.rows.map(r => ({
+            sql:    'INSERT INTO variable_history (variable_id, value, timestamp) VALUES (?, ?, ?)',
+            params: [r.id, r.value, r.ts],
+          }))).catch(err => console.warn('[Server] Erro ao persistir histórico:', err.message));
+        }
+        break;
+
+      // Worker solicita escrita de alarme — main thread faz o INSERT/UPDATE
+      case 'db_write_alarm':
+        if (msg.data.type === 'trigger') {
+          db.run(
+            `INSERT INTO alarm_history (alarm_config_id, trigger_value, status) VALUES (?, ?, 'ACTIVE')`,
+            [msg.data.alarmId, msg.data.value],
+            () => { if (io) io.emit('alarms_updated'); }
+          );
+        } else if (msg.data.type === 'resolve') {
+          db.run(
+            `UPDATE alarm_history SET status = 'RESOLVED', resolve_time = CURRENT_TIMESTAMP WHERE alarm_config_id = ? AND status = 'ACTIVE'`,
+            [msg.data.alarmId],
+            () => { if (io) io.emit('alarms_updated'); }
+          );
+        }
+        break;
+
       default:
         if (msg.type && msg.type.endsWith('_response')) {
           const p = writePromises.get(msg.messageId);
@@ -92,25 +126,87 @@ function startPlcWorker() {
   });
 }
 
-function startGatewayWorker() {
-  if (gatewayWorker) {
-    try { gatewayWorker.terminate(); } catch (_) {}
-  }
-  gatewayWorker = new Worker(path.resolve(__dirname, 'gateway_worker.js'));
+startPlcWorker();
 
-  gatewayWorker.on('error', (err) => {
-    console.error('[GatewayWorker] Erro:', err.message);
-  });
-  gatewayWorker.on('exit', (code) => {
-    if (code !== 0) {
-      console.error(`[GatewayWorker] Encerrado com código ${code}. Reiniciando em 5s...`);
-      setTimeout(() => startGatewayWorker(), 5000);
+// =============================================================================
+// loadPlcInitData — Carrega todos os dados do DB para enviar ao PLC Worker
+// =============================================================================
+async function loadPlcInitData() {
+  const [devices, variables, alarms, activeAlarmRows, lastReadRows, configRow] = await Promise.all([
+    db.allAsync('SELECT * FROM devices'),
+    db.allAsync('SELECT * FROM variables'),
+    db.allAsync('SELECT * FROM alarm_configs WHERE enabled = 1'),
+    db.allAsync(`SELECT alarm_config_id FROM alarm_history WHERE status = 'ACTIVE'`),
+    db.allAsync(
+      `SELECT v.id, v.name, v.display_name, MAX(vh.timestamp) as last_ts
+       FROM variable_history vh JOIN variables v ON v.id = vh.variable_id
+       GROUP BY vh.variable_id`
+    ),
+    db.getAsync(`SELECT value FROM system_settings WHERE key = 'general_config'`),
+  ]);
+
+  // Agrupa por device_id
+  const variablesByDevice = {};
+  for (const v of variables) {
+    if (!variablesByDevice[v.device_id]) variablesByDevice[v.device_id] = [];
+    variablesByDevice[v.device_id].push(v);
+  }
+  const alarmsByDevice = {};
+  for (const a of alarms) {
+    if (!alarmsByDevice[a.device_id]) alarmsByDevice[a.device_id] = [];
+    alarmsByDevice[a.device_id].push(a);
+  }
+
+  const activeAlarms = activeAlarmRows.map(r => r.alarm_config_id);
+
+  // Reconstrói lastReadTimes
+  const lastReadTimes = {};
+  for (const r of lastReadRows) {
+    if (!r.last_ts) continue;
+    const dStr = r.last_ts.includes('Z') || r.last_ts.includes('+') ? r.last_ts : r.last_ts.replace(' ', 'T') + 'Z';
+    const ms = new Date(dStr).getTime();
+    if (!isNaN(ms)) {
+      lastReadTimes[r.id] = ms;
+      if (r.name)         lastReadTimes[r.name]         = ms;
+      if (r.display_name) lastReadTimes[r.display_name] = ms;
     }
-  });
+  }
+
+  let config = {};
+  try { if (configRow?.value) config = JSON.parse(configRow.value); } catch (_) {}
+
+  return { devices, variablesByDevice, alarmsByDevice, config, activeAlarms, lastReadTimes };
 }
 
-startPlcWorker();
-startGatewayWorker();
+// Helper para recarregar variáveis e enviar ao worker
+async function sendVariablesToWorker() {
+  try {
+    const variables = await db.allAsync('SELECT * FROM variables');
+    const variablesByDevice = {};
+    for (const v of variables) {
+      if (!variablesByDevice[v.device_id]) variablesByDevice[v.device_id] = [];
+      variablesByDevice[v.device_id].push(v);
+    }
+    if (plcWorker) plcWorker.postMessage({ type: 'reloadVariables', variablesByDevice });
+  } catch (err) {
+    console.warn('[Server] Erro ao recarregar variáveis:', err.message);
+  }
+}
+
+// Helper para recarregar alarmes e enviar ao worker
+async function sendAlarmsToWorker() {
+  try {
+    const alarms = await db.allAsync('SELECT * FROM alarm_configs WHERE enabled = 1');
+    const alarmsByDevice = {};
+    for (const a of alarms) {
+      if (!alarmsByDevice[a.device_id]) alarmsByDevice[a.device_id] = [];
+      alarmsByDevice[a.device_id].push(a);
+    }
+    if (plcWorker) plcWorker.postMessage({ type: 'loadAlarmConfigs', alarmsByDevice });
+  } catch (err) {
+    console.warn('[Server] Erro ao recarregar alarmes:', err.message);
+  }
+}
 
 // Promise IPC para escrita Modbus com timeout de segurança
 const writeModbusAsync = (deviceId, modbus_type, address, value, decimals, bit_index, var_name) => {
@@ -179,18 +275,8 @@ function handleTelemetry(data) {
     io.volatile.emit('update', data);
     _pendingTelemetry = null;
     if (_telemetryTimer) { clearTimeout(_telemetryTimer); _telemetryTimer = null; }
-  } else if (!_telemetryTimer) {
-    _telemetryTimer = setTimeout(() => {
-      _telemetryTimer = null;
-      if (_pendingTelemetry) {
-        _lastTelemetryEmit = Date.now();
-        io.volatile.emit('update', _pendingTelemetry);
-        _pendingTelemetry = null;
-        gatewayWorker.postMessage({ type: 'publishTelemetry', data: _pendingTelemetry?.state || _pendingTelemetry || {} });
-      }
-    }, 1000 - elapsed);
   }
-  gatewayWorker.postMessage({ type: 'publishTelemetry', data: data.state || data });
+  gatewayService.publishTelemetry(data.state || data);
 }
 
 const logAudit = (user, action, paramName, oldValue, newValue, status = 'SUCESSO') => {
@@ -334,7 +420,7 @@ app.post('/api/devices', (req, res) => {
   db.run(`INSERT INTO devices (name, ip_address, port, polling_interval_ms) VALUES (?, ?, ?, ?)`, 
     [name, ip_address, port || 502, polling_interval_ms || 1000], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plcWorker.postMessage({ type: 'reloadDevices' });
+      loadPlcInitData().then(p => { if (plcWorker) plcWorker.postMessage({ type: 'reloadDevices', payload: p }); }).catch(e => console.warn('[Server] reloadDevices:', e.message));
       res.json({ id: this.lastID, success: true });
   });
 });
@@ -342,7 +428,7 @@ app.post('/api/devices', (req, res) => {
 app.delete('/api/devices/:id', (req, res) => {
   db.run('DELETE FROM devices WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    plcWorker.postMessage({ type: 'reloadDevices' });
+    loadPlcInitData().then(p => { if (plcWorker) plcWorker.postMessage({ type: 'reloadDevices', payload: p }); }).catch(e => console.warn('[Server] reloadDevices:', e.message));
     res.json({ success: true });
   });
 });
@@ -354,7 +440,7 @@ app.put('/api/devices/:id', (req, res) => {
     [name, ip_address, port, polling_interval_ms, req.params.id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plcWorker.postMessage({ type: 'reloadDevices' });
+      loadPlcInitData().then(p => { if (plcWorker) plcWorker.postMessage({ type: 'reloadDevices', payload: p }); }).catch(e => console.warn('[Server] reloadDevices:', e.message));
       res.json({ success: true });
     }
   );
@@ -376,7 +462,7 @@ app.post('/api/variables', (req, res) => {
     [device_id, name, display_name, type, unit || '', modbus_address, modbus_type, decimals || 0, widget_type || 'value', JSON.stringify(grid_layout || {}), color || '#3b82f6', category || 'supervision', JSON.stringify(options || {})], 
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plcWorker.postMessage({ type: 'reloadVariables' });
+      sendVariablesToWorker();
       notifyVariablesUpdated();
       res.json({ id: this.lastID, success: true });
   });
@@ -394,7 +480,7 @@ app.put('/api/variables/:id', (req, res) => {
   } else if (category !== undefined && Object.keys(req.body).length === 1) {
     db.run(`UPDATE variables SET category = ? WHERE id = ?`, [category, req.params.id], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      plcWorker.postMessage({ type: 'reloadVariables' });
+      sendVariablesToWorker();
       notifyVariablesUpdated();
       res.json({ success: true });
     });
@@ -403,7 +489,7 @@ app.put('/api/variables/:id', (req, res) => {
       [device_id, name, display_name, type, unit, modbus_address, modbus_type, decimals, widget_type, color, category, options ? (typeof options === 'string' ? options : JSON.stringify(options)) : null, grid_layout ? (typeof grid_layout === 'string' ? grid_layout : JSON.stringify(grid_layout)) : null, req.params.id], 
       function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        plcWorker.postMessage({ type: 'reloadVariables' });
+        sendVariablesToWorker();
         notifyVariablesUpdated();
         res.json({ success: true });
     });
@@ -413,7 +499,7 @@ app.put('/api/variables/:id', (req, res) => {
 app.delete('/api/variables/:id', (req, res) => {
   db.run('DELETE FROM variables WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    plcWorker.postMessage({ type: 'reloadVariables' });
+    sendVariablesToWorker();
     notifyVariablesUpdated();
     res.json({ success: true });
   });
@@ -532,7 +618,7 @@ app.post('/api/settings/general', (req, res) => {
   const config = req.body;
   db.run(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('general_config', ?)`, [JSON.stringify(config)], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    plcWorker.postMessage({ type: 'loadGeneralConfig' });
+    if (plcWorker) plcWorker.postMessage({ type: 'loadGeneralConfig', config });
     io.emit('general_config_updated', config);
     res.json({ success: true });
   });
@@ -889,7 +975,7 @@ app.post('/api/alarm_configs', (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ id: this.lastID, success: true });
     // Notify PLC service to reload configs
-    plcWorker.postMessage({ type: 'loadAlarmConfigs' });
+    sendAlarmsToWorker();
   });
 });
 
@@ -899,7 +985,7 @@ app.put('/api/alarm_configs/:id', (req, res) => {
   db.run(sql, [parseInt(device_id) || 1, name, description, modbus_address, modbus_type, condition_type, condition_value, severity, action_measures, enabled, req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
-    plcWorker.postMessage({ type: 'loadAlarmConfigs' });
+    sendAlarmsToWorker();
   });
 });
 
@@ -907,7 +993,7 @@ app.delete('/api/alarm_configs/:id', (req, res) => {
   db.run('DELETE FROM alarm_configs WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ success: true });
-    plcWorker.postMessage({ type: 'loadAlarmConfigs' });
+    sendAlarmsToWorker();
   });
 });
 
@@ -1112,9 +1198,9 @@ app.post('/api/config/import', async (req, res) => {
 
     db.run('COMMIT', (err) => {
       if (err) return res.status(500).json({ error: err.message });
-      plcWorker.postMessage({ type: 'reloadDevices' });
-      plcWorker.postMessage({ type: 'loadAlarmConfigs' });
-      plcWorker.postMessage({ type: 'loadGeneralConfig' });
+      loadPlcInitData().then(p => { if (plcWorker) plcWorker.postMessage({ type: 'reloadDevices', payload: p }); }).catch(e => console.warn('[Server] reloadDevices:', e.message));
+      sendAlarmsToWorker();
+      if (plcWorker) plcWorker.postMessage({ type: 'loadGeneralConfig', config: {} });
 
       logAudit('Admin', 'CONFIG_IMPORT', 'Restauração de Backup', '', 'Configuração restaurada', 'SUCESSO');
 
