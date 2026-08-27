@@ -1,10 +1,17 @@
+// =============================================================================
+// db.js — Conexão e Inicialização do Banco de Dados SQLite
+// Inclui helpers Promisificados (allAsync, getAsync, runAsync, runBatchAsync)
+// e otimizações de índice para queries frequentes de telemetria.
+// =============================================================================
+
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const path    = require('path');
 
 const dbPath = path.resolve(__dirname, 'kronox.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Erro ao conectar ao SQLite:', err.message);
+    process.exit(1);
   } else {
     console.log('Conectado ao banco de dados SQLite.');
     db.configure('busyTimeout', 5000);
@@ -12,14 +19,67 @@ const db = new sqlite3.Database(dbPath, (err) => {
   }
 });
 
+// =============================================================================
+// Helpers Promisificados — eliminam callback hell no plc.js e nas rotas
+// =============================================================================
+
+/** SELECT que retorna múltiplas linhas */
+db.allAsync = (sql, params = []) =>
+  new Promise((resolve, reject) =>
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows || [])))
+  );
+
+/** SELECT que retorna uma única linha */
+db.getAsync = (sql, params = []) =>
+  new Promise((resolve, reject) =>
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row || null)))
+  );
+
+/** INSERT / UPDATE / DELETE — resolve com { lastID, changes } */
+db.runAsync = (sql, params = []) =>
+  new Promise((resolve, reject) =>
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve({ lastID: this.lastID, changes: this.changes });
+    })
+  );
+
+/**
+ * Executa múltiplos INSERTs em uma única transação atômica.
+ * rows: Array de { sql, params }
+ */
+db.runBatchAsync = (rows) =>
+  new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+      let error = null;
+      for (const { sql, params } of rows) {
+        if (error) break;
+        db.run(sql, params, (err) => { if (err) error = err; });
+      }
+      db.run('COMMIT', (err) => {
+        if (err || error) {
+          db.run('ROLLBACK');
+          reject(err || error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  });
+
+// =============================================================================
+// Inicialização do Esquema de Banco de Dados
+// =============================================================================
 function initDb() {
   db.serialize(() => {
-    // Otimizações de Alta Concorrência (Prevenção contra SQLITE_BUSY: database is locked)
+    // Otimizações de Alta Concorrência (WAL mode + busy timeout)
     db.run('PRAGMA journal_mode = WAL;');
     db.run('PRAGMA busy_timeout = 5000;');
     db.run('PRAGMA synchronous = NORMAL;');
+    db.run('PRAGMA cache_size = -4096;'); // 4MB de cache em memória
 
-    // Tabela de Configurações do Sistema (Global)
+    // --- Configurações do Sistema ---
     db.run(`CREATE TABLE IF NOT EXISTS system_settings (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -34,7 +94,7 @@ function initDb() {
     });
     db.run(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('lighting_config', ?)`, [initialLighting]);
 
-    // Tabela de Logs de Auditoria
+    // --- Logs de Auditoria ---
     db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user TEXT,
@@ -46,20 +106,19 @@ function initDb() {
       status TEXT
     )`);
 
-    // Tabela de Usuários (simplificado para o teste)
+    // --- Usuários ---
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       role TEXT NOT NULL
     )`);
-
     const insertUser = db.prepare(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`);
     insertUser.run('admin', '9876', 'admin');
     insertUser.run('operador', '1234', 'operator');
     insertUser.finalize();
 
-    // Tabela de Dispositivos (PLCs) — Sem dispositivo padrão: o usuário cria seus próprios
+    // --- Dispositivos (PLCs) ---
     db.run(`CREATE TABLE IF NOT EXISTS devices (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -69,7 +128,7 @@ function initDb() {
       status TEXT DEFAULT 'Offline'
     )`);
 
-    // Tabela de Variáveis Monitoradas (Modbus) — Sem variáveis padrão: o usuário cria as suas
+    // --- Variáveis Monitoradas ---
     db.run(`CREATE TABLE IF NOT EXISTS variables (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       device_id INTEGER,
@@ -87,12 +146,9 @@ function initDb() {
       options TEXT DEFAULT '{}',
       FOREIGN KEY(device_id) REFERENCES devices(id)
     )`);
-
-    // Ensure options column exists on existing databases
     db.run(`ALTER TABLE variables ADD COLUMN options TEXT DEFAULT '{}'`, () => {});
 
-
-    // Tabela de Histórico de Variáveis
+    // --- Histórico de Variáveis + Índices de Performance ---
     db.run(`CREATE TABLE IF NOT EXISTS variable_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       variable_id INTEGER,
@@ -100,7 +156,12 @@ function initDb() {
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(variable_id) REFERENCES variables(id)
     )`);
-    // Tabela de Histórico de Alarmes
+    // Índice crítico: acelera MAX(timestamp) GROUP BY variable_id e queries de período
+    db.run(`CREATE INDEX IF NOT EXISTS idx_vh_var_ts ON variable_history(variable_id, timestamp DESC)`);
+    // Índice para limpeza de dados antigos (TTL/purge)
+    db.run(`CREATE INDEX IF NOT EXISTS idx_vh_ts ON variable_history(timestamp)`);
+
+    // --- Histórico de Alarmes + Índice ---
     db.run(`CREATE TABLE IF NOT EXISTS alarm_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       alarm_config_id INTEGER,
@@ -111,8 +172,9 @@ function initDb() {
       FOREIGN KEY(alarm_config_id) REFERENCES alarm_configs(id)
     )`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_alarm_history_trig ON alarm_history(trigger_time)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_alarm_history_status ON alarm_history(status)`);
 
-    // Tabela de Câmeras (RTSP) — Sem câmera padrão: o usuário cadastra as suas
+    // --- Câmeras (RTSP) ---
     db.run(`CREATE TABLE IF NOT EXISTS cameras (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -123,8 +185,7 @@ function initDb() {
     db.run(`ALTER TABLE cameras ADD COLUMN grid_layout TEXT`, () => {});
     db.run(`ALTER TABLE cameras ADD COLUMN resolution TEXT DEFAULT '360p'`, () => {});
 
-
-    // Tabela de Cadastro de Alarmes
+    // --- Configuração de Alarmes ---
     db.run(`CREATE TABLE IF NOT EXISTS alarm_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       device_id INTEGER,
@@ -140,7 +201,7 @@ function initDb() {
       FOREIGN KEY(device_id) REFERENCES devices(id)
     )`);
 
-    // TABELAS DO MENU GATEWAY (REDE, ROTAS, MQTT, AUDITORIA)
+    // --- Tabelas do Gateway (Rede, Rotas, MQTT, Auditoria) ---
     db.run(`CREATE TABLE IF NOT EXISTS gateway_network_config (
       interface TEXT PRIMARY KEY,
       enabled INTEGER DEFAULT 1,
@@ -155,12 +216,12 @@ function initDb() {
       wifi_security TEXT DEFAULT 'wpa2',
       wifi_password TEXT DEFAULT ''
     )`);
-
-    // Migration: add route_metric column if it doesn't exist
     db.run(`ALTER TABLE gateway_network_config ADD COLUMN route_metric INTEGER DEFAULT 100`, () => {});
 
-    const insertNet = db.prepare(`INSERT OR IGNORE INTO gateway_network_config (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, route_metric) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    insertNet.run('eth0', 1, 'dhcp', '', '', '', '', 1, 100);
+    const insertNet = db.prepare(`INSERT OR IGNORE INTO gateway_network_config
+      (interface, enabled, mode, ip_address, netmask_cidr, gateway, dns, is_default_route, route_metric)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insertNet.run('eth0',  1, 'dhcp', '', '', '', '', 1, 100);
     insertNet.run('wlan0', 1, 'dhcp', '', '', '', '', 1, 200);
     insertNet.finalize();
 
@@ -192,7 +253,6 @@ function initDb() {
       publish_interval_seconds INTEGER DEFAULT 5,
       json_template TEXT DEFAULT '{\n  "data": {\n    "corrente": {{corrente}},\n    "level": {{level}},\n    "pump1": {{pump1}}\n  }\n}'
     )`);
-
     db.run(`INSERT OR IGNORE INTO gateway_mqtt_config (id, host, port, client_id) VALUES (1, 'broker.hivemq.com', 1883, 'kronox-gw-01')`);
 
     db.run(`CREATE TABLE IF NOT EXISTS gateway_mqtt_buffer (

@@ -16,64 +16,125 @@ process.on('uncaughtException', (err) => {
 
 const { Worker } = require('worker_threads');
 const path = require('path');
-const fs = require('fs');
-const db = require('./db');
+const fs   = require('fs');
+const db   = require('./db');
 
-// Cache local para a API não travar o event loop principal
+// Cache local para a API não bloquear o event loop principal
 const plcStateCache = {
-  state: {},
+  state:        {},
   lastReadTimes: {},
-  devices: {}
+  devices:      {},
 };
 
-// -----------------------------------------------------------------------------
-// INICIALIZAÇÃO DE WORKER THREADS (Paralelismo)
-// -----------------------------------------------------------------------------
-const plcWorker = new Worker(path.resolve(__dirname, 'plc_worker.js'));
-const gatewayWorker = new Worker(path.resolve(__dirname, 'gateway_worker.js'));
-
 let _messageIdCounter = 0;
-const writePromises = new Map();
+const writePromises   = new Map();
+let plcWorker         = null;
+let gatewayWorker     = null;
+let _plcRestarts      = 0;
 
-// Função que envelopa a escrita Modbus em uma Promise via IPC
+// -----------------------------------------------------------------------------
+// FACTORY DE WORKERS — com restart automático em caso de crash
+// -----------------------------------------------------------------------------
+function startPlcWorker() {
+  if (plcWorker) {
+    try { plcWorker.terminate(); } catch (_) {}
+  }
+
+  plcWorker = new Worker(path.resolve(__dirname, 'plc_worker.js'));
+
+  plcWorker.on('message', (msg) => {
+    switch (msg.type) {
+      case 'update':
+        plcStateCache.state        = msg.data.state;
+        plcStateCache.lastReadTimes = msg.data.lastReadTimes;
+        handleTelemetry(msg.data);
+        break;
+      case 'alarms_updated':
+        if (io) io.emit('alarms_updated');
+        break;
+      case 'devices_status':
+        plcStateCache.devices = msg.devices;
+        break;
+      case 'device_state_change':
+        // Atualização granular de um único dispositivo
+        if (msg.devId) plcStateCache.devices[msg.devId] = msg.snap;
+        break;
+      default:
+        if (msg.type && msg.type.endsWith('_response')) {
+          const p = writePromises.get(msg.messageId);
+          if (p) {
+            if (msg.success) p.resolve(msg.result);
+            else p.reject(new Error(msg.error || 'Worker error'));
+            writePromises.delete(msg.messageId);
+          }
+        }
+    }
+  });
+
+  plcWorker.on('error', (err) => {
+    console.error('[PLCWorker] Erro não capturado:', err.message);
+  });
+
+  plcWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.error(`[PLCWorker] Encerrado com código ${code}. Reiniciando...`);
+      // Rejeita todas as Promises pendentes para liberar callers
+      for (const [id, p] of writePromises) {
+        p.reject(new Error('PLC Worker reiniciado — tente novamente.'));
+      }
+      writePromises.clear();
+
+      // Backoff simples: 2s na 1ª vez, 5s nas seguintes
+      const delay = _plcRestarts === 0 ? 2000 : 5000;
+      _plcRestarts++;
+      setTimeout(() => startPlcWorker(), delay);
+    }
+  });
+}
+
+function startGatewayWorker() {
+  if (gatewayWorker) {
+    try { gatewayWorker.terminate(); } catch (_) {}
+  }
+  gatewayWorker = new Worker(path.resolve(__dirname, 'gateway_worker.js'));
+
+  gatewayWorker.on('error', (err) => {
+    console.error('[GatewayWorker] Erro:', err.message);
+  });
+  gatewayWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.error(`[GatewayWorker] Encerrado com código ${code}. Reiniciando em 5s...`);
+      setTimeout(() => startGatewayWorker(), 5000);
+    }
+  });
+}
+
+startPlcWorker();
+startGatewayWorker();
+
+// Promise IPC para escrita Modbus com timeout de segurança
 const writeModbusAsync = (deviceId, modbus_type, address, value, decimals, bit_index, var_name) => {
   return new Promise((resolve, reject) => {
     const messageId = ++_messageIdCounter;
-    writePromises.set(messageId, { resolve, reject });
-    plcWorker.postMessage({
-      type: 'writeModbus',
-      payload: { messageId, deviceId, modbus_type, address, value, decimals, bit_index, var_name }
-    });
-    
-    // Timeout de segurança caso a thread fique travada
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (writePromises.has(messageId)) {
         writePromises.get(messageId).reject(new Error('Modbus write timeout via IPC'));
         writePromises.delete(messageId);
       }
     }, 20000);
+
+    writePromises.set(messageId, {
+      resolve: (v) => { clearTimeout(timer); resolve(v); },
+      reject:  (e) => { clearTimeout(timer); reject(e); },
+    });
+
+    if (!plcWorker) return reject(new Error('PLC Worker não disponível'));
+    plcWorker.postMessage({
+      type: 'writeModbus',
+      payload: { messageId, deviceId, modbus_type, address, value, decimals, bit_index, var_name },
+    });
   });
 };
-
-// Lida com mensagens vindas do motor Modbus
-plcWorker.on('message', (msg) => {
-  if (msg.type === 'update') {
-    plcStateCache.state = msg.data.state;
-    plcStateCache.lastReadTimes = msg.data.lastReadTimes;
-    handleTelemetry(msg.data);
-  } else if (msg.type === 'alarms_updated') {
-    io.emit('alarms_updated');
-  } else if (msg.type === 'devices_status') {
-    plcStateCache.devices = msg.devices;
-  } else if (msg.type.endsWith('_response')) {
-    const p = writePromises.get(msg.messageId);
-    if (p) {
-      if (msg.success) p.resolve(msg.result);
-      else p.reject(new Error(msg.error));
-      writePromises.delete(msg.messageId);
-    }
-  }
-});
 
 const app = express();
 app.use(cors());

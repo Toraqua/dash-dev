@@ -1,75 +1,102 @@
 // =============================================================================
 // ModbusPriorityQueue.js — Fila de Prioridades com Deadlines e Coalescimento
+//
 // Níveis de Prioridade:
 //   P0 — Emergência (Parada, Segurança)
-//   P1 — Comandos de Operador (Botões, Switches, Escrita de Setpoints)
+//   P1 — Comandos de Operador (Botões, Switches, Setpoints)
 //   P2 — Telemetria Crítica / Alarmes
 //   P3 — Telemetria Normal (Polling Periódico)
+//
+// Otimização P3: coalescimento via Map<key, index> — lookup O(1) ao invés
+// de Array.findIndex + splice que era O(n) a cada enqueue de telemetria.
 // =============================================================================
 
-const logger = require('./ModbusLogger');
+const logger  = require('./ModbusLogger');
 const metrics = require('./ModbusMetrics');
 
 class ModbusPriorityQueue {
   constructor() {
-    // 4 filas separadas por prioridade: index 0 (P0) -> index 3 (P3)
-    this.queues = [[], [], [], []];
+    // Filas P0-P2: arrays simples (baixo volume, alta prioridade)
+    this.queues = [[], [], []];
+
+    // Fila P3: Map<key, request> para coalescimento O(1)
+    // Mantemos também um array de chaves de inserção para respeitar a ordem
+    this._p3Map   = new Map(); // key → request
+    this._p3Order = [];        // keys na ordem de enqueue (FIFO dentro de P3)
   }
 
-  // Insere uma nova requisição na fila com prioridade e deadline
   enqueue(request) {
-    // request: { id, priority (0-3), deadline, key, execute, resolve, reject, generationId }
     const p = Math.min(Math.max(parseInt(request.priority) || 3, 0), 3);
 
-    // Coalescimento de Telemetria (P3): se já houver uma requisição equivalente na fila P3 ainda não executada, descarta a duplicada antiga
-    if (p === 3 && request.key) {
-      const p3Queue = this.queues[3];
-      const existingIdx = p3Queue.findIndex(r => r.key === request.key);
-      if (existingIdx !== -1) {
-        // Substitui a requisição antiga pela mais recente
-        const oldReq = p3Queue[existingIdx];
-        if (oldReq.reject) {
-          oldReq.reject(new Error('Telemetry Coalesced (Superseded by newer read)'));
-        }
-        p3Queue.splice(existingIdx, 1);
-      }
-    }
-
-    this.queues[p].push({
-      id: request.id || Math.random().toString(36).substring(7),
-      priority: p,
-      key: request.key || null,
-      createdAt: Date.now(),
-      deadline: request.deadline || (Date.now() + 10000), // Deadline padrão de 10s
+    const item = {
+      id:           request.id || Math.random().toString(36).slice(2, 8),
+      priority:     p,
+      key:          request.key || null,
+      createdAt:    Date.now(),
+      deadline:     request.deadline || (Date.now() + 10000),
       generationId: request.generationId || 0,
-      execute: request.execute,
-      resolve: request.resolve,
-      reject: request.reject
-    });
+      execute:      request.execute,
+      resolve:      request.resolve,
+      reject:       request.reject,
+    };
+
+    if (p === 3 && item.key) {
+      // Coalescimento O(1): substitui requisição antiga pela mais recente
+      const existing = this._p3Map.get(item.key);
+      if (existing) {
+        // Rejeita a antiga (será ignorada pelo caller com erro 'Coalesced')
+        if (existing.reject) {
+          existing.reject(new Error('Telemetry Coalesced (Superseded by newer read)'));
+        }
+        // Atualiza o valor no Map sem alterar a posição na fila de ordem
+        this._p3Map.set(item.key, item);
+      } else {
+        this._p3Map.set(item.key, item);
+        this._p3Order.push(item.key);
+      }
+    } else if (p <= 2) {
+      this.queues[p].push(item);
+    } else {
+      // P3 sem key: fallback para array
+      this.queues[2] = this.queues[2] || [];
+      // Trata como P2 (sem chave de coalescimento)
+      this.queues[2].push(item);
+    }
 
     metrics.updateQueueStatus(this.size(), metrics.currentInFlight);
   }
 
-  // Extrai a requisição mais prioritária que não tenha expirado o deadline
   dequeue() {
     const now = Date.now();
 
-    for (let p = 0; p <= 3; p++) {
+    // Verifica P0 → P1 → P2 primeiro
+    for (let p = 0; p <= 2; p++) {
       while (this.queues[p].length > 0) {
         const req = this.queues[p].shift();
-
-        // Verificar se a requisição expirou o deadline enquanto aguardava na fila
         if (req.deadline && now > req.deadline) {
-          logger.debug(`[Modbus Queue] Requisição ${req.id} (P${req.priority}) descartada: Deadline expirado (${now - req.deadline}ms atrás)`);
-          if (req.reject) {
-            req.reject(new Error('Request Deadline Expired'));
-          }
+          if (req.reject) req.reject(new Error('Request Deadline Expired'));
           continue;
         }
-
         metrics.updateQueueStatus(this.size(), metrics.currentInFlight);
         return req;
       }
+    }
+
+    // Depois drena P3 (FIFO pela ordem de enqueue)
+    while (this._p3Order.length > 0) {
+      const key = this._p3Order.shift();
+      const req = this._p3Map.get(key);
+      this._p3Map.delete(key);
+
+      if (!req) continue; // já foi coalescido e removido
+
+      if (req.deadline && now > req.deadline) {
+        if (req.reject) req.reject(new Error('Request Deadline Expired'));
+        continue;
+      }
+
+      metrics.updateQueueStatus(this.size(), metrics.currentInFlight);
+      return req;
     }
 
     metrics.updateQueueStatus(0, metrics.currentInFlight);
@@ -77,16 +104,21 @@ class ModbusPriorityQueue {
   }
 
   size() {
-    return this.queues[0].length + this.queues[1].length + this.queues[2].length + this.queues[3].length;
+    return this.queues[0].length + this.queues[1].length + this.queues[2].length + this._p3Map.size;
   }
 
   clear() {
-    for (let p = 0; p <= 3; p++) {
-      while (this.queues[p].length > 0) {
-        const req = this.queues[p].shift();
+    for (let p = 0; p <= 2; p++) {
+      for (const req of this.queues[p]) {
         if (req.reject) req.reject(new Error('Queue Cleared'));
       }
+      this.queues[p] = [];
     }
+    for (const req of this._p3Map.values()) {
+      if (req.reject) req.reject(new Error('Queue Cleared'));
+    }
+    this._p3Map.clear();
+    this._p3Order = [];
     metrics.updateQueueStatus(0, 0);
   }
 }
