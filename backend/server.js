@@ -213,11 +213,21 @@ app.post('/api/audit', (req, res) => {
 app.get('/api/devices', (req, res) => {
   db.all('SELECT * FROM devices', [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    // Join with live status
-    const result = rows.map(r => ({
-      ...r,
-      live_status: plc.devices[r.id] ? (plc.devices[r.id].connected ? 'Online' : 'Offline') : 'Desconhecido'
-    }));
+    const result = rows.map(r => {
+      const channel = plc.channels ? plc.channels[r.id] : null;
+      let liveStatus = 'Offline';
+      if (channel) {
+        if (channel.state === 'ONLINE') liveStatus = 'Online';
+        else if (channel.state === 'CONNECTING') liveStatus = 'Conectando';
+        else if (channel.state === 'BACKOFF' || channel.state === 'RECOVERING') liveStatus = 'Reconectando';
+      } else if (plc.devices && plc.devices[r.id]) {
+        liveStatus = plc.devices[r.id].connected ? 'Online' : 'Offline';
+      }
+      return {
+        ...r,
+        live_status: liveStatus
+      };
+    });
     res.json(result);
   });
 });

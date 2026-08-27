@@ -91,6 +91,21 @@ class PLCService extends EventEmitter {
     this.init();
   }
 
+  // Compatibilidade legada com APIs que consultam plc.devices
+  get devices() {
+    const map = {};
+    for (const id in this.channels) {
+      const channel = this.channels[id];
+      const meta = this.deviceMetadata[id];
+      map[id] = {
+        connected: channel ? channel.state === 'ONLINE' : false,
+        info: meta ? meta.info : null,
+        state: channel ? channel.state : 'STOPPED'
+      };
+    }
+    return map;
+  }
+
   init() {
     this.loadGeneralConfig();
     this.loadActiveAlarms();
