@@ -802,9 +802,11 @@ app.get('/api/cameras/:id/warmup', (req, res) => {
   const camId = parseInt(req.params.id);
   db.get('SELECT * FROM cameras WHERE id = ?', [camId], (err, cam) => {
     if (err || !cam || !cam.url || !cam.url.startsWith('rtsp')) return res.json({ warming: false });
+    
     if (!activeStreams[camId]) {
       console.log(`[Camera ${camId}] Warmup solicitado. Iniciando FFmpeg antecipadamente...`);
       activeStreams[camId] = { proc: null, clients: new Set(), chunks: [], chunkLen: 0, lastFrameAt: Date.now(), watchdog: null, keepWarmTimer: null, lastFrameBuffer: null };
+      
       activeStreams[camId].watchdog = setInterval(() => {
         const s = activeStreams[camId];
         if (!s) return;
@@ -814,17 +816,29 @@ app.get('/api/cameras/:id/warmup', (req, res) => {
           try { s.proc && s.proc.kill('SIGTERM'); } catch (_) {}
         }
       }, 10000);
+      
       startFfmpeg(camId, cam.url, cam.resolution || '360p');
-    } else if (activeStreams[camId].keepWarmTimer) {
-      // Cancela o timer de limpeza se o usuário está voltando
-      clearTimeout(activeStreams[camId].keepWarmTimer);
-      activeStreams[camId].keepWarmTimer = null;
-      // Reinicia FFmpeg se estava encerrado
+    } else {
+      // Já existe um stream. Se estiver encerrado, reaquece.
       if (!activeStreams[camId].proc) {
         console.log(`[Camera ${camId}] Reaquecendo FFmpeg após keep-warm...`);
         startFfmpeg(camId, cam.url, cam.resolution || '360p');
       }
     }
+
+    // Se não há clientes conectados, reinicia o timer de 120s para garantir que não rode para sempre
+    if (activeStreams[camId].clients.size === 0) {
+      if (activeStreams[camId].keepWarmTimer) clearTimeout(activeStreams[camId].keepWarmTimer);
+      activeStreams[camId].keepWarmTimer = setTimeout(() => {
+        if (activeStreams[camId] && activeStreams[camId].clients.size === 0) {
+          console.log(`[Camera ${camId}] Keep-warm expirado (após warmup). Encerrando FFmpeg.`);
+          try { activeStreams[camId].proc && activeStreams[camId].proc.kill('SIGTERM'); } catch (_) {}
+          clearInterval(activeStreams[camId].watchdog);
+          delete activeStreams[camId];
+        }
+      }, 120000);
+    }
+
     res.json({ warming: true });
   });
 });
