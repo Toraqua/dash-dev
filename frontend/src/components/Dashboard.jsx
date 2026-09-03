@@ -1603,7 +1603,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               ))}
             </div>
             );
-          })() } : (
+          })() : (
             <ResponsiveGridLayout
               key={isEditing ? 'grid-edit' : `grid-view-${snapKey}`}
               className="layout"
