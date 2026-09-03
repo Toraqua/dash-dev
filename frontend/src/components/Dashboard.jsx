@@ -664,13 +664,18 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
   const windowWidth = useWindowWidth();
   const { isTouch } = useDeviceCapability();
 
-  // Celular (< 600px): layout coluna unica simples
-  // Tablet/Desktop (>= 600px): usa o ResponsiveGridLayout com posicoes salvas
-  const isMobileView = windowWidth < 600;
-
-  // Tablet: entrada touch com tela >=600px - usa grid mas sem arrastar
-  const isTouchDevice = isTouch;
-  const isTabletView  = isTouch && !isMobileView;
+  // ESTRATEGIA DE LAYOUT:
+  // - Celular  (windowWidth < 600px)        : flex-column simples
+  // - Tablet   (isTouch + windowWidth>=600) : CSS Grid puro — SEM react-grid-layout
+  //                                           Motivo: react-draggable seta touch-action:none
+  //                                           via inline style JS, bloqueando todos os eventos
+  //                                           de toque nos cards. CSS !important nao sobrescreve
+  //                                           inline styles em alguns browsers Android/Samsung.
+  // - Desktop  (!isTouch)                   : ResponsiveGridLayout com drag/resize
+  const isMobileView  = windowWidth < 600;        // celular
+  const isTouchDevice = isTouch;                   // qualquer touch (tablet ou celular)
+  const isTabletView  = isTouch && !isMobileView;  // tablet (>= 600px, touch)
+  const useSimpleLayout = isMobileView || isTabletView; // phone + tablet → CSS simples
 
   const fullLayout = useMemo(() => {
     const varItems = variables.map((v, index) => {
@@ -1016,9 +1021,39 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
         </div>
       ) : (
         <div ref={containerRef} style={{ width: '100%', minHeight: '500px' }}>
-          {isMobileView ? (
-            <div className="dashboard-grid-mobile" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
-              {variables.map((v, index) => {
+          {useSimpleLayout ? (() => {
+            // Ordenar cards pela posição salva (y DESC, x ASC) para manter
+            // a ordem visual do layout de desktop
+            const sortedVars = [...variables].sort((a, b) => {
+              let la = {}, lb = {};
+              try { la = JSON.parse(a.grid_layout || '{}'); } catch (e) {}
+              try { lb = JSON.parse(b.grid_layout || '{}'); } catch (e) {}
+              const ay = la.y !== undefined ? la.y : 999;
+              const by_ = lb.y !== undefined ? lb.y : 999;
+              const ax = la.x !== undefined ? la.x : 999;
+              const bx = lb.x !== undefined ? lb.x : 999;
+              return ay !== by_ ? ay - by_ : ax - bx;
+            });
+
+            // Estilo do container:
+            // - Celular: flex coluna simples
+            // - Tablet: CSS Grid com 2 colunas (sem react-grid-layout)
+            const containerStyle = isTabletView ? {
+              display: 'grid',
+              gridTemplateColumns: windowWidth >= 900 ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)',
+              gap: '0.75rem',
+              width: '100%',
+              alignItems: 'start',
+            } : {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1rem',
+              width: '100%',
+            };
+
+            return (
+              <div className="dashboard-grid-mobile" style={containerStyle}>
+              {sortedVars.map((v, index) => {
                 let l = {};
                 try { l = JSON.parse(v.grid_layout || '{}'); } catch (e) {}
                 const gridProps = {
@@ -1069,8 +1104,12 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   }
                 }
 
+                // No tablet (CSS grid): cards largos ocupam todas as colunas
+                const isWideCard = gridProps.w >= 6 || ['graph','timeseries','comparative_analysis','scatter','multibit_list','variable_list','table'].includes(v.widget_type);
+                const cardGridColumn = isTabletView && isWideCard ? '1 / -1' : undefined;
+
                 return (
-                  <div key={'var-' + v.id.toString()} className="card" style={{ width: '100%', height: (['graph', 'timeseries', 'comparative_analysis', 'scatter'].includes(v.widget_type)) ? '280px' : undefined, minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
+                  <div key={'var-' + v.id.toString()} className="card" style={{ width: '100%', gridColumn: cardGridColumn, height: (['graph', 'timeseries', 'comparative_analysis', 'scatter'].includes(v.widget_type)) ? '280px' : undefined, minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
                     <div className="card-header" style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div className="card-title" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <Activity size={16} color={v.color || "var(--color-primary)"} />
@@ -1558,12 +1597,13 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               })}
 
               {cameras.map((c) => (
-                <div key={'cam-' + c.id.toString()} style={{ width: '100%', height: '240px', position: 'relative' }}>
+                <div key={'cam-' + c.id.toString()} style={{ width: '100%', gridColumn: isTabletView ? '1 / -1' : undefined, height: '240px', position: 'relative' }}>
                   <DashboardCameraCard c={c} getBaseUrl={getBaseUrl} />
                 </div>
               ))}
             </div>
-          ) : (
+            );
+          })() } : (
             <ResponsiveGridLayout
               key={isEditing ? 'grid-edit' : `grid-view-${snapKey}`}
               className="layout"
