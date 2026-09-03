@@ -470,7 +470,7 @@ body {
 }
 
 /* Responsividade Mobile & Tablet */
-@media (max-width: 768px) {
+@media (max-width: 599px) {
   html, body {
     overflow-x: hidden !important;
     width: 100vw !important;
@@ -573,7 +573,7 @@ body {
     box-sizing: border-box;
   }
 
-  /* Forçar empilhamento 100% vertical dos cartões um embaixo do outro no mobile */
+  /* Em telas muito pequenas (< 600px): forçar empilhamento vertical */
   .react-grid-layout {
     display: flex !important;
     flex-direction: column !important;
@@ -594,6 +594,16 @@ body {
     touch-action: pan-y !important;
   }
 
+  .react-resizable-handle {
+    display: none !important;
+  }
+}
+
+/* Tablet (600px - 1024px): mantém grid mas ajusta tamanho */
+@media (min-width: 600px) and (max-width: 1024px) {
+  .react-grid-item {
+    touch-action: pan-y !important;
+  }
   .react-resizable-handle {
     display: none !important;
   }
@@ -707,9 +717,10 @@ body {
 }
 
 /* =========================================
-   MOBILE RESPONSIVO (max-width: 768px)
-   Corrige scroll travado em celulares
-   ========================================= */
+/* ==========================================================
+   MOBILE + TABLET (max-width: 768px)
+   Sidebar horizontal, scroll corrigido
+   ========================================================== */
 @media (max-width: 768px) {
   body {
     overflow-y: auto;
@@ -740,6 +751,7 @@ body {
     gap: 0.25rem;
     flex: 1;
     padding-bottom: 0.25rem;
+    -webkit-overflow-scrolling: touch;
   }
 
   .sidebar-nav .nav-item {
@@ -781,17 +793,17 @@ body {
     font-size: 1.25rem;
   }
 
-  /* Dashboard grid em mobile: 1 coluna */
+  /* Dashboard grid: tablet usa ResponsiveGridLayout, apenas AlarmPanel e panels de lista usam CSS grid */
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
-  /* Cards em mobile */
+  /* Cards em mobile/tablet */
   .card {
     padding: 1rem !important;
   }
 
-  /* Tabelas: scroll horizontal em mobile */
+  /* Tabelas: scroll horizontal */
   table {
     display: block;
     overflow-x: auto;

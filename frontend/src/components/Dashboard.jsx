@@ -664,7 +664,12 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const isMobileView = windowWidth <= 768 || isTouchDevice;
+  // Celular (< 600px): layout coluna única simples
+  // Tablet/Desktop (>= 600px): usa o ResponsiveGridLayout com posições salvas
+  const isMobileView = windowWidth < 600;
+
+  // Tablet: touch device com tela >=600px — usa grid mas sem arrastar
+  const isTabletView = isTouchDevice && !isMobileView;
 
   const fullLayout = useMemo(() => {
     const varItems = variables.map((v, index) => {
@@ -976,7 +981,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
 
   return (
     <div>
-      {/* Control Bar - only show Editar on non-touch devices */}
+      {/* Control Bar - editável apenas em desktop (não-touch) */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
         {!isTouchDevice && (
           <button 
@@ -1563,11 +1568,12 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               className="layout"
               width={width || 1200}
               layouts={{ lg: fullLayout, md: fullLayout, sm: fullLayout, xs: fullLayout, xxs: fullLayout }}
-              breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 767, xxs: 0 }}
-              cols={{ lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }}
-              rowHeight={100}
+              breakpoints={{ lg: 1200, md: 996, sm: 600, xs: 480, xxs: 0 }}
+              cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
+              rowHeight={isTabletView ? 90 : 100}
               isDraggable={isEditing && !isTouchDevice}
               isResizable={isEditing && !isTouchDevice}
+              margin={isTabletView ? [8, 8] : [10, 10]}
               onLayoutChange={handleLayoutChange}
               onDragStop={() => {
                 if (!isEditing || isTouchDevice) {
