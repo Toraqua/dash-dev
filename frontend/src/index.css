@@ -829,21 +829,24 @@ body.react-draggable-transparent-selection {
 }
 
 /* =============================================================================
-   TOUCH / MOBILE — Garante que todos os elementos interativos funcionem
-   com toque em tablets e celulares.
-   A raiz do problema: react-grid-layout seta touch-action:none nos grid items,
-   bloqueando eventos de toque nos elementos filhos.
-   A solução é sobrescrever com touch-action:auto em todos os interativos.
+   TOUCH — pointer: coarse (W3C padrao para dispositivos touch)
+   Libera todos os elementos interativos do bloqueio do react-grid-layout.
+   Usa (pointer: coarse) sem (hover: none) porque:
+   - iPads iOS 13+ reportam hover como 'conditional', nao 'none'
+   - Alguns tablets Android tambem sao excluidos incorretamente com hover:none
+   - pointer:coarse e a condicao correta e suficiente (W3C spec)
    ============================================================================= */
-@media (hover: none) and (pointer: coarse) {
-  /* Camera: mostrar controles sempre visíveis (sem :hover) */
+@media (pointer: coarse) {
+  /* Camera: mostrar controles sempre visiveis (sem :hover) */
   .camera-dash-card .camera-dash-header,
   .camera-dash-card .camera-pause-hint {
     opacity: 1 !important;
     pointer-events: all !important;
   }
 
-  /* Liberar touch-action em TODOS os elementos interativos dentro do grid */
+  /* Liberar touch-action em TODOS os elementos interativos dentro do grid.
+     O react-grid-layout seta touch-action:none nos itens do grid,
+     bloqueando eventos de toque nos elementos filhos — este e o fix. */
   .react-grid-item button,
   .react-grid-item input,
   .react-grid-item select,
@@ -858,7 +861,7 @@ body.react-draggable-transparent-selection {
     user-select: none;
   }
 
-  /* Tamanhos de alvo de toque maiores para botões e inputs (mínimo 44px — guideline Apple/Google) */
+  /* Touch targets minimos: 44px (guideline Apple HIG + Google Material) */
   .react-grid-item button,
   .react-grid-item [role="button"] {
     min-height: 44px;
@@ -867,10 +870,10 @@ body.react-draggable-transparent-selection {
   .react-grid-item input,
   .react-grid-item select {
     min-height: 44px;
-    font-size: 16px !important; /* Evita zoom automático no iOS ao focar input */
+    font-size: 16px !important; /* Evita zoom automatico no iOS */
   }
 
-  /* Também para elementos fora do grid (mobile view com flex-column) */
+  /* Mobile (coluna unica): mesmos fixes */
   .dashboard-grid-mobile button,
   .dashboard-grid-mobile input,
   .dashboard-grid-mobile select,
@@ -893,17 +896,17 @@ body.react-draggable-transparent-selection {
     font-size: 16px !important;
   }
 
-  /* Prevenir que o grid bloqueie scroll vertical durante navegação */
+  /* Grid layout: permitir scroll vertical */
   .react-grid-layout {
     touch-action: pan-y !important;
   }
 
-  /* Grid items: permitir scroll vertical, bloquear só horizontal para evitar scroll acidental */
+  /* Grid items: apenas scroll vertical, nao bloqueia interacao horizontal nos filhos */
   .react-grid-item {
     touch-action: pan-y !important;
   }
 
-  /* Form inputs globais no mobile */
+  /* Inputs e selects globais */
   input[type="number"],
   input[type="text"],
   input[type="password"],
@@ -913,11 +916,12 @@ body.react-draggable-transparent-selection {
     min-height: 44px;
   }
 
-  /* Botões globais */
+  /* Botoes globais */
   button, .btn {
     min-height: 44px;
     touch-action: auto !important;
   }
 }
+
 
 

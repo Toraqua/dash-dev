@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { ResponsiveGridLayout, useContainerWidth } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
+import { useDeviceCapability, useWindowWidth } from '../hooks/useDeviceCapability';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ScatterChart, Scatter } from 'recharts';
 import { Activity, Power, Edit2, Check, RefreshCw, Move, TrendingUp, Gauge, Table as TableIcon, List as ListIcon, Link as LinkIcon, MapPin, Image as ImageIcon, BarChart2, Layout, Grid, Binary, Clock, Type, Edit3, Download, ChevronLeft, ChevronRight, Play, Maximize } from 'lucide-react';
 
@@ -655,21 +656,21 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
 
   const targetVarList = useMemo(() => allVariables.length > 0 ? allVariables : variables, [allVariables, variables]);
 
-  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
-  const [isTouchDevice] = useState(() => typeof window !== 'undefined' && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window));
+  // ------------------------------------------------------------------
+  // Deteccao de dispositivo via CSS Interaction Media Features (W3C).
+  // pointer: coarse = entrada por toque (tablet/celular)
+  // pointer: fine   = mouse/trackpad (desktop/laptop)
+  // ------------------------------------------------------------------
+  const windowWidth = useWindowWidth();
+  const { isTouch } = useDeviceCapability();
 
-  useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Celular (< 600px): layout coluna única simples
-  // Tablet/Desktop (>= 600px): usa o ResponsiveGridLayout com posições salvas
+  // Celular (< 600px): layout coluna unica simples
+  // Tablet/Desktop (>= 600px): usa o ResponsiveGridLayout com posicoes salvas
   const isMobileView = windowWidth < 600;
 
-  // Tablet: touch device com tela >=600px — usa grid mas sem arrastar
-  const isTabletView = isTouchDevice && !isMobileView;
+  // Tablet: entrada touch com tela >=600px - usa grid mas sem arrastar
+  const isTouchDevice = isTouch;
+  const isTabletView  = isTouch && !isMobileView;
 
   const fullLayout = useMemo(() => {
     const varItems = variables.map((v, index) => {
