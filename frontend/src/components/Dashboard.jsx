@@ -656,6 +656,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
   const targetVarList = useMemo(() => allVariables.length > 0 ? allVariables : variables, [allVariables, variables]);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const [isTouchDevice] = useState(() => typeof window !== 'undefined' && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window));
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -663,7 +664,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const isMobileView = windowWidth <= 768;
+  const isMobileView = windowWidth <= 768 || isTouchDevice;
 
   const fullLayout = useMemo(() => {
     const varItems = variables.map((v, index) => {
@@ -975,30 +976,32 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
 
   return (
     <div>
-      {/* Control Bar */}
+      {/* Control Bar - only show Editar on non-touch devices */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-        <button 
-          className={`btn ${isEditing ? 'btn-primary' : ''}`} 
-          style={!isEditing ? { background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' } : {}}
-          onClick={() => {
-            if (!isEditing) {
-              if (!currentUser) {
-                if (onRequireLogin) onRequireLogin();
-                return;
+        {!isTouchDevice && (
+          <button 
+            className={`btn ${isEditing ? 'btn-primary' : ''}`} 
+            style={!isEditing ? { background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' } : {}}
+            onClick={() => {
+              if (!isEditing) {
+                if (!currentUser) {
+                  if (onRequireLogin) onRequireLogin();
+                  return;
+                }
+                if (currentUser.role !== 'admin') {
+                  alert('Acesso Restrito: Apenas Administradores podem editar o layout do Dashboard.');
+                  return;
+                }
+                setIsEditing(true);
+              } else {
+                saveLayout();
               }
-              if (currentUser.role !== 'admin') {
-                alert('Acesso Restrito: Apenas Administradores podem editar o layout do Dashboard.');
-                return;
-              }
-              setIsEditing(true);
-            } else {
-              saveLayout();
-            }
-          }}
-        >
-          {isEditing ? <Check size={16} /> : <Edit2 size={16} />}
-          {isEditing ? 'Salvar Layout' : 'Editar'}
-        </button>
+            }}
+          >
+            {isEditing ? <Check size={16} /> : <Edit2 size={16} />}
+            {isEditing ? 'Salvar Layout' : 'Editar'}
+          </button>
+        )}
       </div>
 
       {variables.length === 0 && cameras.length === 0 ? (
@@ -1081,7 +1084,8 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                             padding: '6px 8px',
                             outline: 'none',
                             fontWeight: 500,
-                            minHeight: '36px',
+                            minHeight: '44px',
+                            touchAction: 'auto',
                             WebkitAppearance: 'auto',
                           }}
                         >
@@ -1286,14 +1290,15 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                               placeholder="Novo valor..."
                               value={inputValues[v.id] !== undefined ? inputValues[v.id] : ''}
                               onChange={(e) => setInputValues({ ...inputValues, [v.id]: e.target.value })}
-                              style={{ flex: 1, padding: '0.4rem', fontSize: '0.9rem', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white' }}
+                              style={{ flex: 1, padding: '0.6rem 0.8rem', fontSize: '1rem', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', touchAction: 'auto', minHeight: '44px' }}
                             />
                             <button 
                               className="btn btn-primary" 
                               onClick={() => handleWriteModbus(v)}
-                              style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                              onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); handleWriteModbus(v); }}
+                              style={{ padding: '0.6rem 1rem', fontSize: '0.9rem', touchAction: 'auto', minHeight: '44px', whiteSpace: 'nowrap' }}
                             >
-                              Escrever Modbus
+                              Escrever
                             </button>
                           </div>
                         </div>
@@ -1561,17 +1566,16 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 767, xxs: 0 }}
               cols={{ lg: 12, md: 10, sm: 6, xs: 1, xxs: 1 }}
               rowHeight={100}
-              isDraggable={isEditing}
-              isResizable={isEditing}
+              isDraggable={isEditing && !isTouchDevice}
+              isResizable={isEditing && !isTouchDevice}
               onLayoutChange={handleLayoutChange}
               onDragStop={() => {
-                if (!isEditing) {
-                  // Efeito mola: remonta o grid com layout original salvo
+                if (!isEditing || isTouchDevice) {
                   setSnapKey(k => k + 1);
                 }
               }}
               onResizeStop={() => {
-                if (!isEditing) {
+                if (!isEditing || isTouchDevice) {
                   setSnapKey(k => k + 1);
                 }
               }}
@@ -1650,7 +1654,8 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                         padding: '6px 8px',
                         outline: 'none',
                         fontWeight: 500,
-                        minHeight: '36px',
+                        minHeight: '44px',
+                        touchAction: 'auto',
                         WebkitAppearance: 'auto',
                       }}
                     >
@@ -1860,14 +1865,15 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           placeholder="Novo valor..."
                           value={inputValues[v.id] !== undefined ? inputValues[v.id] : ''}
                           onChange={(e) => setInputValues({ ...inputValues, [v.id]: e.target.value })}
-                          style={{ flex: 1, padding: '0.4rem', fontSize: '0.9rem', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white' }}
+                          style={{ flex: 1, padding: '0.6rem 0.8rem', fontSize: '1rem', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-color)', borderRadius: '6px', color: 'white', touchAction: 'auto', minHeight: '44px' }}
                         />
                         <button 
                           className="btn btn-primary" 
                           onClick={() => handleWriteModbus(v)}
-                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                          onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); handleWriteModbus(v); }}
+                          style={{ padding: '0.6rem 1rem', fontSize: '0.9rem', touchAction: 'auto', minHeight: '44px', whiteSpace: 'nowrap' }}
                         >
-                          Escrever Modbus
+                          Escrever
                         </button>
                       </div>
                     </div>

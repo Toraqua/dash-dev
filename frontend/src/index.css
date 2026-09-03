@@ -816,12 +816,96 @@ body.react-draggable-transparent-selection {
   pointer-events: all !important;
 }
 
-/* Em dispositivos touch (tablets e celulares): sempre exibe o botão pausar */
+/* =============================================================================
+   TOUCH / MOBILE — Garante que todos os elementos interativos funcionem
+   com toque em tablets e celulares.
+   A raiz do problema: react-grid-layout seta touch-action:none nos grid items,
+   bloqueando eventos de toque nos elementos filhos.
+   A solução é sobrescrever com touch-action:auto em todos os interativos.
+   ============================================================================= */
 @media (hover: none) and (pointer: coarse) {
+  /* Camera: mostrar controles sempre visíveis (sem :hover) */
   .camera-dash-card .camera-dash-header,
   .camera-dash-card .camera-pause-hint {
     opacity: 1 !important;
     pointer-events: all !important;
   }
+
+  /* Liberar touch-action em TODOS os elementos interativos dentro do grid */
+  .react-grid-item button,
+  .react-grid-item input,
+  .react-grid-item select,
+  .react-grid-item textarea,
+  .react-grid-item a,
+  .react-grid-item [role="button"],
+  .react-grid-item label,
+  .react-grid-item .ios-switch,
+  .react-grid-item .ios-slider {
+    touch-action: auto !important;
+    -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
+    user-select: none;
+  }
+
+  /* Tamanhos de alvo de toque maiores para botões e inputs (mínimo 44px — guideline Apple/Google) */
+  .react-grid-item button,
+  .react-grid-item [role="button"] {
+    min-height: 44px;
+  }
+
+  .react-grid-item input,
+  .react-grid-item select {
+    min-height: 44px;
+    font-size: 16px !important; /* Evita zoom automático no iOS ao focar input */
+  }
+
+  /* Também para elementos fora do grid (mobile view com flex-column) */
+  .dashboard-grid-mobile button,
+  .dashboard-grid-mobile input,
+  .dashboard-grid-mobile select,
+  .dashboard-grid-mobile textarea,
+  .dashboard-grid-mobile [role="button"],
+  .dashboard-grid-mobile .ios-switch,
+  .dashboard-grid-mobile .ios-slider {
+    touch-action: auto !important;
+    -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
+  }
+
+  .dashboard-grid-mobile button,
+  .dashboard-grid-mobile [role="button"] {
+    min-height: 44px;
+  }
+
+  .dashboard-grid-mobile input,
+  .dashboard-grid-mobile select {
+    min-height: 44px;
+    font-size: 16px !important;
+  }
+
+  /* Prevenir que o grid bloqueie scroll vertical durante navegação */
+  .react-grid-layout {
+    touch-action: pan-y !important;
+  }
+
+  /* Grid items: permitir scroll vertical, bloquear só horizontal para evitar scroll acidental */
+  .react-grid-item {
+    touch-action: pan-y !important;
+  }
+
+  /* Form inputs globais no mobile */
+  input[type="number"],
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  select {
+    font-size: 16px !important;
+    min-height: 44px;
+  }
+
+  /* Botões globais */
+  button, .btn {
+    min-height: 44px;
+    touch-action: auto !important;
+  }
 }
+
 
