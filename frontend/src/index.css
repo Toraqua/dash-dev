@@ -599,14 +599,53 @@ body {
   }
 }
 
-/* Tablet (600px - 1024px): mantém grid mas ajusta tamanho */
-@media (min-width: 600px) and (max-width: 1024px) {
-  .react-grid-item {
-    touch-action: pan-y !important;
-  }
-  .react-resizable-handle {
-    display: none !important;
-  }
+/* ================================================================
+   CORREÇÃO GLOBAL DO react-grid-layout touch-action
+   O react-grid-layout seta touch-action:none em TODOS os grid items
+   via sua propria folha de estilos (independente de isDraggable).
+   Isso bloqueia toque em botoes, inputs e selects dentro dos cards.
+   Esta correcao e GLOBAL — sem media query — para funcionar em
+   TODOS os browsers: Chrome, Samsung Internet, Safari, Firefox.
+   ================================================================ */
+
+/* Grid items: permitir scroll vertical (pan-y) */
+.react-grid-item {
+  touch-action: pan-y !important;
+}
+
+/* Todos os elementos interativos dentro do grid:
+   touch-action:auto libera completamente o evento de toque */
+.react-grid-item button,
+.react-grid-item input,
+.react-grid-item select,
+.react-grid-item textarea,
+.react-grid-item a,
+.react-grid-item label,
+.react-grid-item [role="button"],
+.react-grid-item .ios-switch,
+.react-grid-item .ios-slider,
+.react-grid-item [tabindex] {
+  touch-action: auto !important;
+  -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
+}
+
+/* Mesmo fix para o layout de celular (flex-column, fora do grid) */
+.dashboard-grid-mobile button,
+.dashboard-grid-mobile input,
+.dashboard-grid-mobile select,
+.dashboard-grid-mobile textarea,
+.dashboard-grid-mobile a,
+.dashboard-grid-mobile label,
+.dashboard-grid-mobile [role="button"],
+.dashboard-grid-mobile .ios-switch,
+.dashboard-grid-mobile .ios-slider {
+  touch-action: auto !important;
+  -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
+}
+
+/* Ocultar handle de resize no tablet (sem media query, via classe JS) */
+.react-resizable-handle-hidden {
+  display: none !important;
 }
 
 /* iOS Style Toggle Switch */
@@ -828,100 +867,47 @@ body.react-draggable-transparent-selection {
   pointer-events: all !important;
 }
 
-/* =============================================================================
-   TOUCH — pointer: coarse (W3C padrao para dispositivos touch)
-   Libera todos os elementos interativos do bloqueio do react-grid-layout.
-   Usa (pointer: coarse) sem (hover: none) porque:
-   - iPads iOS 13+ reportam hover como 'conditional', nao 'none'
-   - Alguns tablets Android tambem sao excluidos incorretamente com hover:none
-   - pointer:coarse e a condicao correta e suficiente (W3C spec)
-   ============================================================================= */
+/* =================================================================
+   TOUCH — Ajustes de layout e UX para dispositivos com toque.
+   Usa (pointer: coarse) como dica adicional para aumentar
+   alvos de toque e prevenir zoom no iOS — mas o fix principal
+   de touch-action ja foi aplicado GLOBALMENTE acima.
+   ================================================================= */
 @media (pointer: coarse) {
-  /* Camera: mostrar controles sempre visiveis (sem :hover) */
+  /* Camera: sempre visivel (sem :hover) */
   .camera-dash-card .camera-dash-header,
   .camera-dash-card .camera-pause-hint {
     opacity: 1 !important;
     pointer-events: all !important;
   }
 
-  /* Liberar touch-action em TODOS os elementos interativos dentro do grid.
-     O react-grid-layout seta touch-action:none nos itens do grid,
-     bloqueando eventos de toque nos elementos filhos — este e o fix. */
+  /* Touch targets: minimo 44px (Apple HIG + Google Material Design) */
+  button, .btn,
   .react-grid-item button,
+  .dashboard-grid-mobile button {
+    min-height: 44px;
+  }
+
+  /* Prevenir zoom automatico no iOS ao focar inputs (font-size < 16px) */
+  input, select, textarea,
   .react-grid-item input,
   .react-grid-item select,
-  .react-grid-item textarea,
-  .react-grid-item a,
-  .react-grid-item [role="button"],
-  .react-grid-item label,
-  .react-grid-item .ios-switch,
-  .react-grid-item .ios-slider {
-    touch-action: auto !important;
-    -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
-    user-select: none;
-  }
-
-  /* Touch targets minimos: 44px (guideline Apple HIG + Google Material) */
-  .react-grid-item button,
-  .react-grid-item [role="button"] {
-    min-height: 44px;
-  }
-
-  .react-grid-item input,
-  .react-grid-item select {
-    min-height: 44px;
-    font-size: 16px !important; /* Evita zoom automatico no iOS */
-  }
-
-  /* Mobile (coluna unica): mesmos fixes */
-  .dashboard-grid-mobile button,
-  .dashboard-grid-mobile input,
-  .dashboard-grid-mobile select,
-  .dashboard-grid-mobile textarea,
-  .dashboard-grid-mobile [role="button"],
-  .dashboard-grid-mobile .ios-switch,
-  .dashboard-grid-mobile .ios-slider {
-    touch-action: auto !important;
-    -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
-  }
-
-  .dashboard-grid-mobile button,
-  .dashboard-grid-mobile [role="button"] {
-    min-height: 44px;
-  }
-
   .dashboard-grid-mobile input,
   .dashboard-grid-mobile select {
-    min-height: 44px;
-    font-size: 16px !important;
-  }
-
-  /* Grid layout: permitir scroll vertical */
-  .react-grid-layout {
-    touch-action: pan-y !important;
-  }
-
-  /* Grid items: apenas scroll vertical, nao bloqueia interacao horizontal nos filhos */
-  .react-grid-item {
-    touch-action: pan-y !important;
-  }
-
-  /* Inputs e selects globais */
-  input[type="number"],
-  input[type="text"],
-  input[type="password"],
-  input[type="email"],
-  select {
     font-size: 16px !important;
     min-height: 44px;
-  }
-
-  /* Botoes globais */
-  button, .btn {
-    min-height: 44px;
-    touch-action: auto !important;
   }
 }
 
-
+/* Fallback: se pointer:coarse nao for suportado (browser muito antigo),
+   aplica os mesmos ajustes para telas menores que 1200px */
+@media (max-width: 1200px) and (hover: none) {
+  .camera-dash-card .camera-dash-header,
+  .camera-dash-card .camera-pause-hint {
+    opacity: 1 !important;
+    pointer-events: all !important;
+  }
+  button, .btn { min-height: 44px; }
+  input, select { font-size: 16px !important; min-height: 44px; }
+}
 

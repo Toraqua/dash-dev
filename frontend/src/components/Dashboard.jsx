@@ -1575,6 +1575,7 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               isDraggable={isEditing && !isTouchDevice}
               isResizable={isEditing && !isTouchDevice}
               margin={isTabletView ? [8, 8] : [10, 10]}
+              draggableCancel="button,input,select,textarea,a,label,[role='button'],.ios-switch,.ios-slider,[tabindex]"
               onLayoutChange={handleLayoutChange}
               onDragStop={() => {
                 if (!isEditing || isTouchDevice) {
