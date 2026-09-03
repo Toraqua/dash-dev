@@ -649,8 +649,14 @@ function DashboardCameraCard({ c, getBaseUrl }) {
 function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin, allVariables = [] }) {
   const { width, containerRef } = useContainerWidth();
   const [isEditing, setIsEditing] = useState(false);
-  const [isReordering, setIsReordering] = useState(false); // modo reordenar no tablet
-  const [tabletOrder, setTabletOrder] = useState(null);    // ordem personalizada no tablet (null = usa ordem salva)
+  const [isReordering, setIsReordering] = useState(false);
+  // tabletOrder: lista de {id, type} na ordem salva. Carregado do localStorage.
+  const [tabletOrder, setTabletOrder] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kronox_tablet_order');
+      return saved ? JSON.parse(saved) : null; // null = usar sort por grid_layout
+    } catch (e) { return null; }
+  });
   const [currentLayout, setCurrentLayout] = useState([]);
   const [historyData, setHistoryData] = useState({});
   const [inputValues, setInputValues] = useState({});
@@ -885,10 +891,17 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     }
   };
 
-  // Salva a ordem definida no tablet (modo reordenar)
-  // Atribui y = index*2 para cada item na nova ordem, preservando x/w/h salvos
+  // Salva a ordem do tablet.
+  // Persistencia primaria: localStorage (funciona offline, instantaneo, sobrevive refresh).
+  // Persistencia secundaria: API (atualiza y nos grid_layout para refletir no desktop tambem).
   const saveTabletOrder = async (orderedItems) => {
     try {
+      // 1. Salvar no localStorage IMEDIATAMENTE (persistencia garantida)
+      const orderIds = orderedItems.map(item => ({ id: item.id, type: item.type }));
+      localStorage.setItem('kronox_tablet_order', JSON.stringify(orderIds));
+      setTabletOrder(orderedItems); // manter a ordem no state tambem
+
+      // 2. Tentar salvar na API (best-effort, atualiza desktop tambem)
       const promises = orderedItems.map((item, idx) => {
         const existingLayout = (() => {
           try { return JSON.parse(item.grid_layout || '{}'); } catch (e) { return {}; }
@@ -904,19 +917,17 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ grid_layout: newLayout })
-          });
+          }).catch(() => {}); // nao falhar se API estiver indisponivel
         } else if (item.type === 'cam') {
           return fetch(getBaseUrl() + `/api/cameras/${item.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ grid_layout: newLayout })
-          });
+          }).catch(() => {});
         }
         return Promise.resolve();
       });
       await Promise.all(promises);
-      if (onRefresh) await onRefresh();
-      setTabletOrder(null); // volta para ordem salva
     } catch (e) {
       console.error('Erro ao salvar ordem do tablet', e);
     } finally {
@@ -1135,13 +1146,42 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
               return ay !== by_ ? ay - by_ : ax - bx;
             };
 
+            // Lista base por posicao salva (fallback)
+            const defaultSorted = [
+              ...[...variables].sort(sortFn).map(v => ({ ...v, type: 'var' })),
+              ...[...cameras].sort(sortFn).map(c => ({ ...c, type: 'cam' }))
+            ];
+
             // Combina variaveis + cameras em uma lista unificada com tipo
-            const allSorted = isReordering && tabletOrder
-              ? tabletOrder
-              : [
-                  ...[...variables].sort(sortFn).map(v => ({ ...v, type: 'var' })),
-                  ...[...cameras].sort(sortFn).map(c => ({ ...c, type: 'cam' }))
-                ];
+            // Fontes de ordem (prioridade decrescente):
+            //   1. tabletOrder em modo reordenacao (itens completos)
+            //   2. tabletOrder carregado do localStorage ({id, type} => lookup nos arrays)
+            //   3. sort por grid_layout.y/x (fallback)
+            let allSorted;
+            if (tabletOrder) {
+              // Reconstruir itens completos a partir dos ids salvos
+              allSorted = tabletOrder
+                .map(ref => {
+                  if (ref.type === 'var') {
+                    const found = variables.find(v => String(v.id) === String(ref.id));
+                    return found ? { ...found, type: 'var' } : null;
+                  } else if (ref.type === 'cam') {
+                    const found = cameras.find(c => String(c.id) === String(ref.id));
+                    return found ? { ...found, type: 'cam' } : null;
+                  }
+                  return null;
+                })
+                .filter(Boolean); // remover itens deletados
+              // Adicionar itens novos (nao estavam no localStorage) ao final
+              defaultSorted.forEach(item => {
+                const alreadyIn = allSorted.some(
+                  s => String(s.id) === String(item.id) && s.type === item.type
+                );
+                if (!alreadyIn) allSorted.push(item);
+              });
+            } else {
+              allSorted = defaultSorted;
+            }
 
             const containerStyle = isTabletView ? {
               display: 'grid',
@@ -1167,11 +1207,12 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       style={{ position: 'relative', gridColumn: isTabletView ? '1 / -1' : undefined, height: '240px' }}
                     >
                       {isReordering && (
-                        <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
+                        /* Botoes no canto inferior ESQUERDO para nao conflitar com fullscreen (canto superior direito) */
+                        <div style={{ position: 'absolute', bottom: '8px', left: '8px', zIndex: 20, display: 'flex', gap: '4px' }}>
                           <button onClick={() => moveTabletItem(index, 'up')} disabled={index === 0}
-                            style={{ background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 10px', fontSize: '1rem', cursor: 'pointer', opacity: index === 0 ? 0.3 : 1 }}>▲</button>
+                            style={{ background: 'rgba(0,0,0,0.75)', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '1.1rem', cursor: 'pointer', opacity: index === 0 ? 0.3 : 1 }}>▲</button>
                           <button onClick={() => moveTabletItem(index, 'down')} disabled={index === allSorted.length - 1}
-                            style={{ background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 10px', fontSize: '1rem', cursor: 'pointer', opacity: index === allSorted.length - 1 ? 0.3 : 1 }}>▼</button>
+                            style={{ background: 'rgba(0,0,0,0.75)', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '1.1rem', cursor: 'pointer', opacity: index === allSorted.length - 1 ? 0.3 : 1 }}>▼</button>
                         </div>
                       )}
                       <DashboardCameraCard c={item} getBaseUrl={getBaseUrl} />
