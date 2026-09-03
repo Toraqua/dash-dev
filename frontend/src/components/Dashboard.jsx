@@ -649,6 +649,8 @@ function DashboardCameraCard({ c, getBaseUrl }) {
 function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables = [], cameras = [], currentUser, generalConfig = {}, onRefresh, onRequireLogin, allVariables = [] }) {
   const { width, containerRef } = useContainerWidth();
   const [isEditing, setIsEditing] = useState(false);
+  const [isReordering, setIsReordering] = useState(false); // modo reordenar no tablet
+  const [tabletOrder, setTabletOrder] = useState(null);    // ordem personalizada no tablet (null = usa ordem salva)
   const [currentLayout, setCurrentLayout] = useState([]);
   const [historyData, setHistoryData] = useState({});
   const [inputValues, setInputValues] = useState({});
@@ -883,6 +885,56 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
     }
   };
 
+  // Salva a ordem definida no tablet (modo reordenar)
+  // Atribui y = index*2 para cada item na nova ordem, preservando x/w/h salvos
+  const saveTabletOrder = async (orderedItems) => {
+    try {
+      const promises = orderedItems.map((item, idx) => {
+        const existingLayout = (() => {
+          try { return JSON.parse(item.grid_layout || '{}'); } catch (e) { return {}; }
+        })();
+        const newLayout = {
+          x: existingLayout.x !== undefined ? existingLayout.x : 0,
+          y: idx * 2,
+          w: existingLayout.w || 3,
+          h: existingLayout.h || 2
+        };
+        if (item.type === 'var') {
+          return fetch(getBaseUrl() + `/api/variables/${item.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grid_layout: newLayout })
+          });
+        } else if (item.type === 'cam') {
+          return fetch(getBaseUrl() + `/api/cameras/${item.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ grid_layout: newLayout })
+          });
+        }
+        return Promise.resolve();
+      });
+      await Promise.all(promises);
+      if (onRefresh) await onRefresh();
+      setTabletOrder(null); // volta para ordem salva
+    } catch (e) {
+      console.error('Erro ao salvar ordem do tablet', e);
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
+  // Move um item para cima ou para baixo na ordem do tablet
+  const moveTabletItem = (index, direction) => {
+    setTabletOrder(prev => {
+      const arr = [...prev];
+      const swapIdx = direction === 'up' ? index - 1 : index + 1;
+      if (swapIdx < 0 || swapIdx >= arr.length) return arr;
+      [arr[index], arr[swapIdx]] = [arr[swapIdx], arr[index]];
+      return arr;
+    });
+  };
+
   const handleToggleSwitch = async (variable, currentValue) => {
     await modbusWrite(variable, !currentValue);
   };
@@ -987,18 +1039,69 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
 
   return (
     <div>
-      {/* Control Bar - editável apenas em desktop (não-touch) */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+      {/* Control Bar */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '1rem' }}>
+
+        {/* Botao Reordenar - apenas touch + admin */}
+        {isTouchDevice && (
+          isReordering ? (
+            <>
+              <button
+                className="btn"
+                style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}
+                onClick={() => { setIsReordering(false); setTabletOrder(null); }}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  if (tabletOrder) saveTabletOrder(tabletOrder);
+                }}
+              >
+                <Check size={16} /> Salvar Ordem
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn"
+              style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}
+              onClick={() => {
+                if (!currentUser) { if (onRequireLogin) onRequireLogin(); return; }
+                if (currentUser.role !== 'admin') {
+                  alert('Acesso Restrito: Apenas Administradores podem reordenar o Dashboard.');
+                  return;
+                }
+                // Montar lista inicial com a ordem salva atual
+                const sortFn = (a, b) => {
+                  let la = {}, lb = {};
+                  try { la = JSON.parse(a.grid_layout || '{}'); } catch (e) {}
+                  try { lb = JSON.parse(b.grid_layout || '{}'); } catch (e) {}
+                  const ay = la.y !== undefined ? la.y : 999, by_ = lb.y !== undefined ? lb.y : 999;
+                  const ax = la.x !== undefined ? la.x : 999, bx = lb.x !== undefined ? lb.x : 999;
+                  return ay !== by_ ? ay - by_ : ax - bx;
+                };
+                const allItems = [
+                  ...[...variables].sort(sortFn).map(v => ({ ...v, type: 'var' })),
+                  ...[...cameras].sort(sortFn).map(c => ({ ...c, type: 'cam' }))
+                ];
+                setTabletOrder(allItems);
+                setIsReordering(true);
+              }}
+            >
+              <Move size={16} /> Reordenar
+            </button>
+          )
+        )}
+
+        {/* Botao Editar Layout - apenas desktop (nao-touch) */}
         {!isTouchDevice && (
-          <button 
-            className={`btn ${isEditing ? 'btn-primary' : ''}`} 
+          <button
+            className={`btn ${isEditing ? 'btn-primary' : ''}`}
             style={!isEditing ? { background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' } : {}}
             onClick={() => {
               if (!isEditing) {
-                if (!currentUser) {
-                  if (onRequireLogin) onRequireLogin();
-                  return;
-                }
+                if (!currentUser) { if (onRequireLogin) onRequireLogin(); return; }
                 if (currentUser.role !== 'admin') {
                   alert('Acesso Restrito: Apenas Administradores podem editar o layout do Dashboard.');
                   return;
@@ -1022,22 +1125,24 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
       ) : (
         <div ref={containerRef} style={{ width: '100%', minHeight: '500px' }}>
           {useSimpleLayout ? (() => {
-            // Ordenar cards pela posição salva (y DESC, x ASC) para manter
-            // a ordem visual do layout de desktop
-            const sortedVars = [...variables].sort((a, b) => {
+            // Lista ordenada: usa tabletOrder (modo reordenar) ou sort por posicao salva
+            const sortFn = (a, b) => {
               let la = {}, lb = {};
               try { la = JSON.parse(a.grid_layout || '{}'); } catch (e) {}
               try { lb = JSON.parse(b.grid_layout || '{}'); } catch (e) {}
-              const ay = la.y !== undefined ? la.y : 999;
-              const by_ = lb.y !== undefined ? lb.y : 999;
-              const ax = la.x !== undefined ? la.x : 999;
-              const bx = lb.x !== undefined ? lb.x : 999;
+              const ay = la.y !== undefined ? la.y : 999, by_ = lb.y !== undefined ? lb.y : 999;
+              const ax = la.x !== undefined ? la.x : 999, bx = lb.x !== undefined ? lb.x : 999;
               return ay !== by_ ? ay - by_ : ax - bx;
-            });
+            };
 
-            // Estilo do container:
-            // - Celular: flex coluna simples
-            // - Tablet: CSS Grid com 2 colunas (sem react-grid-layout)
+            // Combina variaveis + cameras em uma lista unificada com tipo
+            const allSorted = isReordering && tabletOrder
+              ? tabletOrder
+              : [
+                  ...[...variables].sort(sortFn).map(v => ({ ...v, type: 'var' })),
+                  ...[...cameras].sort(sortFn).map(c => ({ ...c, type: 'cam' }))
+                ];
+
             const containerStyle = isTabletView ? {
               display: 'grid',
               gridTemplateColumns: windowWidth >= 900 ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)',
@@ -1053,7 +1158,29 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
 
             return (
               <div className="dashboard-grid-mobile" style={containerStyle}>
-              {sortedVars.map((v, index) => {
+              {allSorted.map((item, index) => {
+                // Cameras: renderizacao simples
+                if (item.type === 'cam') {
+                  return (
+                    <div
+                      key={'cam-' + item.id}
+                      style={{ position: 'relative', gridColumn: isTabletView ? '1 / -1' : undefined, height: '240px' }}
+                    >
+                      {isReordering && (
+                        <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
+                          <button onClick={() => moveTabletItem(index, 'up')} disabled={index === 0}
+                            style={{ background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 10px', fontSize: '1rem', cursor: 'pointer', opacity: index === 0 ? 0.3 : 1 }}>▲</button>
+                          <button onClick={() => moveTabletItem(index, 'down')} disabled={index === allSorted.length - 1}
+                            style={{ background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 10px', fontSize: '1rem', cursor: 'pointer', opacity: index === allSorted.length - 1 ? 0.3 : 1 }}>▼</button>
+                        </div>
+                      )}
+                      <DashboardCameraCard c={item} getBaseUrl={getBaseUrl} />
+                    </div>
+                  );
+                }
+
+                // Variaveis: renderizacao completa
+                const v = item;
                 let l = {};
                 try { l = JSON.parse(v.grid_layout || '{}'); } catch (e) {}
                 const gridProps = {
@@ -1104,12 +1231,22 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   }
                 }
 
-                // No tablet (CSS grid): cards largos ocupam todas as colunas
-                const isWideCard = gridProps.w >= 6 || ['graph','timeseries','comparative_analysis','scatter','multibit_list','variable_list','table'].includes(v.widget_type);
+                // No tablet: cards muito largos (>= 75% da grade) ocupam todas as colunas
+                // w >= 9 em grid de 12 = 75%+. Graficos e tabelas sempre full-width.
+                const isWideCard = gridProps.w >= 9 || ['graph','timeseries','comparative_analysis','scatter','multibit_list','variable_list','table'].includes(v.widget_type);
                 const cardGridColumn = isTabletView && isWideCard ? '1 / -1' : undefined;
 
                 return (
-                  <div key={'var-' + v.id.toString()} className="card" style={{ width: '100%', gridColumn: cardGridColumn, height: (['graph', 'timeseries', 'comparative_analysis', 'scatter'].includes(v.widget_type)) ? '280px' : undefined, minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
+                  <div key={'var-' + v.id.toString()} className="card" style={{ position: 'relative', width: '100%', gridColumn: cardGridColumn, height: (['graph', 'timeseries', 'comparative_analysis', 'scatter'].includes(v.widget_type)) ? '280px' : undefined, minHeight: '170px', display: 'flex', flexDirection: 'column', padding: '1rem', borderTop: `4px solid ${v.color || 'var(--color-primary)'}` }}>
+                    {/* Setas de reordenacao (modo Reordenar no tablet) */}
+                    {isReordering && (
+                      <div style={{ position: 'absolute', top: '4px', right: '4px', zIndex: 10, display: 'flex', gap: '2px' }}>
+                        <button onClick={() => moveTabletItem(index, 'up')} disabled={index === 0}
+                          style={{ background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '1rem', cursor: 'pointer', lineHeight: 1, opacity: index === 0 ? 0.3 : 1 }}>▲</button>
+                        <button onClick={() => moveTabletItem(index, 'down')} disabled={index === allSorted.length - 1}
+                          style={{ background: 'rgba(0,0,0,0.7)', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '1rem', cursor: 'pointer', lineHeight: 1, opacity: index === allSorted.length - 1 ? 0.3 : 1 }}>▼</button>
+                      </div>
+                    )}
                     <div className="card-header" style={{ marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div className="card-title" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <Activity size={16} color={v.color || "var(--color-primary)"} />
@@ -1595,12 +1732,6 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                   </div>
                 );
               })}
-
-              {cameras.map((c) => (
-                <div key={'cam-' + c.id.toString()} style={{ width: '100%', gridColumn: isTabletView ? '1 / -1' : undefined, height: '240px', position: 'relative' }}>
-                  <DashboardCameraCard c={c} getBaseUrl={getBaseUrl} />
-                </div>
-              ))}
             </div>
             );
           })() : (
