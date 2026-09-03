@@ -572,19 +572,27 @@ function DashboardCameraCard({ c, getBaseUrl }) {
                 onLoad={() => setIsStreamReady(true)}
                 style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', opacity: isStreamReady ? 1 : 0, transition: 'opacity 0.4s ease' }}
               />
-              {/* Botão de pausa flutuante - aparece no hover */}
+              {/* Botão de pausa - sempre visível em touch, aparece no hover em desktop */}
               <div className="camera-pause-hint" style={{
                 position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)',
-                background: 'rgba(0,0,0,0.55)', color: '#fff', padding: '4px 12px',
+                background: 'rgba(0,0,0,0.55)', color: '#fff', padding: '6px 14px',
                 borderRadius: '20px', fontSize: '0.72rem', cursor: 'pointer',
                 opacity: 0, transition: 'opacity 0.2s ease', whiteSpace: 'nowrap',
-                backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.15)'
-              }} onClick={() => setIsPlaying(false)}>
+                backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.15)',
+                WebkitTapHighlightColor: 'transparent',
+                minWidth: '70px', textAlign: 'center',
+              }}
+                onClick={(e) => { e.stopPropagation(); setIsPlaying(false); }}
+                onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); setIsPlaying(false); }}
+              >
                 ⏸ Pausar
               </div>
             </div>
           ) : (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(2,5,8,0.95) 100%)' }}>
+            <div
+              style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, rgba(15,23,42,0.8) 0%, rgba(2,5,8,0.95) 100%)', zIndex: 3 }}
+              onClick={handlePlay}
+            >
               {/* Preview do último frame ao fazer hover */}
               {lastFrameUrl && (
                 <img
@@ -599,7 +607,8 @@ function DashboardCameraCard({ c, getBaseUrl }) {
                 </div>
                 <button
                   className="btn"
-                  onClick={handlePlay}
+                  onClick={(e) => { e.stopPropagation(); handlePlay(); }}
+                  onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); handlePlay(); }}
                   style={{
                     width: '72px', height: '72px', borderRadius: '50%',
                     background: 'rgba(59, 130, 246, 0.2)',
@@ -607,7 +616,8 @@ function DashboardCameraCard({ c, getBaseUrl }) {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                     backdropFilter: 'blur(8px)', zIndex: 5,
-                    boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)'
+                    boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)',
+                    WebkitTapHighlightColor: 'transparent',
                   }}
                   onMouseOver={(e) => {
                     e.currentTarget.style.background = 'var(--color-primary)';
@@ -1062,15 +1072,17 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                           value={timeRanges[v.id] !== undefined ? timeRanges[v.id] : 10} 
                           onChange={(e) => handleTimeRangeChange(v.id, parseInt(e.target.value))}
                           style={{
-                            background: 'transparent',
-                            border: 'none',
-                            borderBottom: '2px solid #06b6d4',
+                            background: 'var(--bg-panel)',
+                            border: '1px solid rgba(6,182,212,0.4)',
+                            borderRadius: '6px',
                             color: 'var(--text-secondary)',
                             fontSize: '0.82rem',
                             cursor: 'pointer',
-                            padding: '2px 4px',
+                            padding: '6px 8px',
                             outline: 'none',
-                            fontWeight: 500
+                            fontWeight: 500,
+                            minHeight: '36px',
+                            WebkitAppearance: 'auto',
                           }}
                         >
                           <option value={1} style={{ background: '#0b0f19', color: '#f8fafc' }}>1 minuto</option>
@@ -1629,15 +1641,17 @@ function Dashboard({ plcState = {}, setPlcState, lastReadTimes = {}, variables =
                       value={timeRanges[v.id] !== undefined ? timeRanges[v.id] : 10} 
                       onChange={(e) => handleTimeRangeChange(v.id, parseInt(e.target.value))}
                       style={{
-                        background: 'transparent',
-                        border: 'none',
-                        borderBottom: '2px solid #06b6d4',
+                        background: 'var(--bg-panel)',
+                        border: '1px solid rgba(6,182,212,0.4)',
+                        borderRadius: '6px',
                         color: 'var(--text-secondary)',
                         fontSize: '0.82rem',
                         cursor: 'pointer',
-                        padding: '2px 4px',
+                        padding: '6px 8px',
                         outline: 'none',
-                        fontWeight: 500
+                        fontWeight: 500,
+                        minHeight: '36px',
+                        WebkitAppearance: 'auto',
                       }}
                     >
                       <option value={1} style={{ background: '#0b0f19', color: '#f8fafc' }}>1 minuto</option>

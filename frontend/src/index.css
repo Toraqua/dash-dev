@@ -816,3 +816,12 @@ body.react-draggable-transparent-selection {
   pointer-events: all !important;
 }
 
+/* Em dispositivos touch (tablets e celulares): sempre exibe o botão pausar */
+@media (hover: none) and (pointer: coarse) {
+  .camera-dash-card .camera-dash-header,
+  .camera-dash-card .camera-pause-hint {
+    opacity: 1 !important;
+    pointer-events: all !important;
+  }
+}
+
